@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pigskin Palooka — Expansion Draft Board</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+  :root{
+    --bg: #0d1210;
+    --bg-panel: #141b18;
+    --bg-card: #1a2320;
+    --line: #2a352f;
+    --line-soft: #212b26;
+    --gold: #d4a94e;
+    --gold-dim: #7d6633;
+    --text: #e9ede8;
+    --text-dim: #8fa198;
+    --text-faint: #5c6b63;
+    --red: #c0563f;
+    --green: #5c8f6e;
+    --qb: #c0563f;
+    --rb: #4f8f6b;
+    --wr: #3d7aa8;
+    --te: #b08a3e;
+    --flex: #8a6bb0;
+    --idp: #6b7a6f;
+  }
+
+  *{ box-sizing: border-box; }
+
+  html{ scroll-behavior: smooth; }
+
+  body{
+    margin:0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Oswald', sans-serif;
+    font-weight: 400;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono{ font-family:'JetBrains Mono', monospace; }
+
+  /* ============ HEADER ============ */
+  header{
+    padding: 48px 24px 32px;
+    text-align:center;
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(ellipse 900px 300px at 50% 0%, rgba(212,169,78,0.08), transparent 70%);
+    position: relative;
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    font-size: 11px;
+    color: var(--gold-dim);
+    margin-bottom: 14px;
+  }
+  h1{
+    font-size: clamp(28px, 5vw, 46px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin: 0 0 10px;
+    text-transform: uppercase;
+  }
+  h1 span{ color: var(--gold); }
+  .sub{
+    color: var(--text-dim);
+    font-size: 15px;
+    max-width: 560px;
+    margin: 0 auto;
+    line-height:1.5;
+  }
+
+  /* ============ SLIDER CONTROL ============ */
+  .control-dock{
+    position: sticky;
+    top:0;
+    z-index: 50;
+    background: rgba(13,18,16,0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 18px 24px;
+  }
+  .control-inner{
+    max-width: 760px;
+    margin: 0 auto;
+    display:flex;
+    align-items:center;
+    gap: 20px;
+  }
+  .protect-readout{
+    font-family:'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 34px;
+    color: var(--gold);
+    min-width: 108px;
+    text-align:center;
+    line-height:1;
+  }
+  .protect-readout small{
+    display:block;
+    font-size:10px;
+    letter-spacing:0.15em;
+    color: var(--text-faint);
+    font-weight:500;
+    margin-top:4px;
+    text-transform:uppercase;
+  }
+  .slider-wrap{ flex:1; position:relative; padding-top: 6px;}
+  input[type=range]{
+    -webkit-appearance:none;
+    width:100%;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(to right, var(--gold) 0%, var(--gold) var(--pct,0%), var(--line) var(--pct,0%), var(--line) 100%);
+    outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none;
+    width:22px; height:22px;
+    border-radius:50%;
+    background: var(--gold);
+    border: 3px solid #0d1210;
+    box-shadow: 0 0 0 1px var(--gold);
+    cursor:pointer;
+  }
+  input[type=range]::-moz-range-thumb{
+    width:16px; height:16px;
+    border-radius:50%;
+    background: var(--gold);
+    border: 3px solid #0d1210;
+    box-shadow: 0 0 0 1px var(--gold);
+    cursor:pointer;
+  }
+  .ticks{
+    display:flex; justify-content:space-between;
+    margin-top:6px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    padding: 0 2px;
+  }
+
+  /* ============ BOARD ============ */
+  main{ max-width: 1500px; margin: 0 auto; padding: 32px 20px 80px; }
+
+  .board{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(230px,1fr));
+    gap: 14px;
+    margin-bottom: 56px;
+  }
+
+  .team-card{
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+  }
+  .team-head{
+    padding: 12px 14px 10px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-panel);
+  }
+  .team-owner{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    letter-spacing:0.1em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+  .team-name{
+    font-weight:600;
+    font-size: 16px;
+    margin-top:2px;
+    color: var(--text);
+  }
+  .team-total{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    color: var(--gold-dim);
+    margin-top: 4px;
+  }
+  .tier-badge{
+    display:inline-block;
+    font-family:'JetBrains Mono',monospace;
+    font-size: 9px;
+    font-weight:600;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    padding: 2px 7px;
+    border-radius: 10px;
+    margin-top: 6px;
+    color: #0d1210;
+  }
+  .tier-Contender{ background: var(--gold); }
+  .tier-LastDance{ background: #b5563f; color:#f2ece2; }
+  .tier-AllIn{ background: #c77f2e; }
+  .tier-Frisky{ background: #3d7aa8; color:#f2ece2; }
+  .tier-TrusttheProcess{ background: #4f8f6b; }
+  .odds-note{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    margin-left: 6px;
+  }
+  .move-up{ color:#6fbf8a; font-size:10px; margin-left:2px; }
+  .move-down{ color:#8a6262; font-size:10px; margin-left:2px; }
+
+  /* ============ JUMP NAV ============ */
+  .jumpnav{
+    max-width: 760px;
+    margin: 0 auto 14px;
+    display:flex;
+    gap: 10px;
+    justify-content:center;
+    flex-wrap: wrap;
+  }
+  .jumpnav a{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    color: var(--text-dim);
+    text-decoration:none;
+    padding: 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    transition: all .12s ease;
+  }
+  .jumpnav a:hover{ border-color: var(--gold-dim); color: var(--gold); }
+
+  .timeline-toggle{
+    max-width: 760px;
+    margin: 0 auto;
+    display:flex;
+    align-items:center;
+    gap: 8px;
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    padding-top: 12px;
+    border-top: 1px solid var(--line-soft);
+    margin-top: 12px;
+    cursor:pointer;
+  }
+  .timeline-toggle input{ accent-color: var(--gold); width:14px; height:14px; }
+
+  /* ============ LINEUP VIEW ============ */
+  .lineup-toggle-btn{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    padding: 4px 9px;
+    border-radius: 3px;
+    cursor:pointer;
+  }
+  .lineup-toggle-btn:hover{ color: var(--gold); border-color: var(--gold-dim); }
+  .bench-divider{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--text-faint);
+    padding: 10px 18px 4px;
+    text-transform: uppercase;
+    border-top: 1px solid var(--line-soft);
+    margin-top: 4px;
+  }
+  .slot-label{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    font-weight:700;
+    color: var(--gold-dim);
+    width: 42px;
+    flex-shrink:0;
+  }
+
+  .protect-list{
+    list-style:none;
+    margin:0; padding: 6px 0;
+    flex:1;
+    min-height: 40px;
+  }
+  .protect-list li{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    padding: 5px 14px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+  }
+  .protect-list li:hover{ background: rgba(255,255,255,0.02); }
+  .rank{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    color: var(--text-faint);
+    width: 16px;
+    flex-shrink:0;
+  }
+  .pname{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ptag{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 9px;
+    font-weight:600;
+    padding: 1px 5px;
+    border-radius: 2px;
+    color: #0d1210;
+    flex-shrink:0;
+  }
+  .pval{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+    flex-shrink:0;
+    width: 34px;
+    text-align:right;
+  }
+  .empty-note{
+    padding: 14px;
+    color: var(--text-faint);
+    font-size: 12px;
+    font-style: italic;
+  }
+
+  .tag-QB{ background: var(--qb); }
+  .tag-RB{ background: var(--rb); }
+  .tag-WR{ background: var(--wr); }
+  .tag-TE{ background: var(--te); }
+  .tag-DL, .tag-LB, .tag-DB{ background: var(--idp); }
+
+  li.slot-QB{ border-left-color: var(--qb); }
+  li.slot-RB{ border-left-color: var(--rb); }
+  li.slot-WR{ border-left-color: var(--wr); }
+  li.slot-TE{ border-left-color: var(--te); }
+  li.slot-DL, li.slot-LB, li.slot-DB{ border-left-color: var(--idp); }
+
+  /* ============ POOL SECTION ============ */
+  .pool-section{ border-top: 1px solid var(--line); padding-top: 40px; }
+  .pool-head{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap: 16px;
+    margin-bottom: 20px;
+  }
+  .pool-title{
+    font-size: 24px;
+    font-weight:700;
+    text-transform:uppercase;
+  }
+  .pool-title .n{ color:var(--gold); }
+  .pool-sub{ color: var(--text-dim); font-size: 13px; }
+
+  .filters{
+    display:flex;
+    gap:6px;
+    flex-wrap:wrap;
+  }
+  .filter-btn{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    letter-spacing:0.05em;
+    padding: 7px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    color: var(--text-dim);
+    border-radius: 3px;
+    cursor:pointer;
+    transition: all .12s ease;
+  }
+  .filter-btn:hover{ border-color: var(--gold-dim); color: var(--text); }
+  .filter-btn.active{
+    background: var(--gold);
+    border-color: var(--gold);
+    color: #0d1210;
+    font-weight:600;
+  }
+  .team-select{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    letter-spacing:0.05em;
+    padding: 7px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--gold-dim);
+    color: var(--gold);
+    border-radius: 3px;
+    cursor:pointer;
+    margin-right: 4px;
+  }
+  .team-select:hover{ border-color: var(--gold); }
+  .team-select option{ background: var(--bg-card); color: var(--text); }
+
+  .pool-table-wrap{
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  table{ width:100%; border-collapse: collapse; }
+  thead th{
+    text-align:left;
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform:uppercase;
+    color: var(--text-faint);
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0;
+    background: var(--bg-panel);
+  }
+  tbody td{
+    padding: 9px 16px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  tbody tr:hover{ background: rgba(255,255,255,0.02); }
+  td.rankcol{ font-family:'JetBrains Mono',monospace; color: var(--text-faint); width:40px; }
+  td.valcol{ font-family:'JetBrains Mono',monospace; text-align:right; color: var(--gold-dim); width: 70px; }
+  td.teamcol{ color: var(--text-faint); font-size:12px; }
+  .pool-scroll{ max-height: 640px; overflow-y:auto; }
+
+  .draft-section{ border-top: 1px solid var(--line); padding-top: 40px; margin-top: 40px; }
+
+  .draft-board{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 700px){ .draft-board{ grid-template-columns: 1fr; } }
+
+  .draft-card{
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow:hidden;
+  }
+  .draft-card-head{
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-card);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap: 10px;
+  }
+  .draft-name-input{
+    background: transparent;
+    border: none;
+    border-bottom: 1px dashed var(--line);
+    color: var(--gold);
+    font-family: 'Oswald', sans-serif;
+    font-weight: 600;
+    font-size: 17px;
+    padding: 2px 0;
+    width: 62%;
+    outline: none;
+  }
+  .draft-name-input:focus{ border-bottom-color: var(--gold); }
+  .draft-card-count{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  .draft-list{
+    list-style:none;
+    margin:0; padding: 6px 0;
+    max-height: 480px;
+    overflow-y:auto;
+  }
+  .draft-list li{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding: 6px 18px;
+    font-size: 13px;
+    border-left: 3px solid transparent;
+  }
+  .draft-list li:hover{ background: rgba(255,255,255,0.02); }
+  .pick-label{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    color: var(--gold-dim);
+    width: 42px;
+    flex-shrink:0;
+  }
+  .draft-empty{
+    padding: 18px;
+    color: var(--text-faint);
+    font-size: 12px;
+    font-style: italic;
+  }
+
+  footer{
+    text-align:center;
+    padding: 30px;
+    color: var(--text-faint);
+    font-size: 12px;
+    font-family:'JetBrains Mono',monospace;
+  }
+
+  @media (max-width: 640px){
+    .control-inner{ flex-direction:column; align-items:stretch; gap:10px; }
+    .protect-readout{ text-align:left; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="eyebrow">10 &rarr; 12 Team Realignment</div>
+  <h1>The <span>Protect</span> Line</h1>
+  <p class="sub">Drag the slider to see exactly what each team would protect at that number —
+  and who'd be left standing in the expansion pool for the two new squads.</p>
+</header>
+
+<div class="control-dock">
+  <div class="jumpnav">
+    <a href="#pool-section">&darr; Players Available</a>
+    <a href="#draft-section">&darr; New Team Rosters</a>
+  </div>
+  <div class="control-inner">
+    <div class="protect-readout" id="readout">0<small>protected</small></div>
+    <div class="slider-wrap">
+      <input type="range" id="slider" min="0" max="25" value="0" step="1">
+      <div class="ticks">
+        <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25</span>
+      </div>
+    </div>
+  </div>
+  <label class="timeline-toggle">
+    <input type="checkbox" id="timelineToggle" checked>
+    Factor in contention window &mdash; contenders lean toward proven vets, rebuilders lean toward youth
+  </label>
+</div>
+
+<main>
+  <div class="board" id="board"></div>
+
+  <div class="pool-section" id="pool-section">
+    <div class="pool-head">
+      <div>
+        <div class="pool-title"><span class="n" id="poolCount">0</span> Players Available</div>
+        <div class="pool-sub" id="poolSubText">Everyone left unprotected across all 10 rosters at this threshold, ranked by consensus dynasty value.</div>
+      </div>
+      <div class="filters" id="filters">
+        <select class="team-select" id="teamSelect">
+          <option value="ALL">From: Everyone</option>
+        </select>
+        <button class="filter-btn active" data-f="ALL">ALL</button>
+        <button class="filter-btn" data-f="QB">QB</button>
+        <button class="filter-btn" data-f="RB">RB</button>
+        <button class="filter-btn" data-f="WR">WR</button>
+        <button class="filter-btn" data-f="TE">TE</button>
+        <button class="filter-btn" data-f="FLEX">FLEX</button>
+      </div>
+    </div>
+    <div class="pool-table-wrap">
+      <div class="pool-scroll">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Player</th><th>Pos</th><th>NFL</th><th>From</th><th style="text-align:right">Value</th></tr>
+          </thead>
+          <tbody id="poolBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="draft-section" id="draft-section">
+    <div class="pool-head">
+      <div>
+        <div class="pool-title">Snake Draft &mdash; 2 New Teams</div>
+        <div class="pool-sub">Best-player-available, alternating every round, drafting straight out of the pool above until it's gone.</div>
+      </div>
+    </div>
+    <div class="draft-board" id="draftBoard"></div>
+  </div>
+</main>
+
+<footer>
+  Consensus value = average of FantasyCalc, Dynasty Daddy, and KeepTradeCut (via Dynasty Daddy) &middot; IDP dropped (not kept by anyone) &middot; contention-window adjustment uses each team's Dynasty Daddy tier + FantasyCalc playoff odds against player age to lightly re-order (not re-value) protects &middot; snapshot: 2026-07-28
+</footer>
+
+<script src="data.js"></script>
+<script>
+const FLEX_POS = new Set(["RB","WR","TE"]);
+const TIER_CLASS = {
+  "Contender": "tier-Contender",
+  "Last Dance": "tier-LastDance",
+  "All In": "tier-AllIn",
+  "Frisky": "tier-Frisky",
+  "Trust the Process": "tier-TrusttheProcess",
+};
+
+const slider = document.getElementById('slider');
+const readout = document.getElementById('readout');
+const board = document.getElementById('board');
+const poolBody = document.getElementById('poolBody');
+const poolCount = document.getElementById('poolCount');
+const poolSubText = document.getElementById('poolSubText');
+const filterBtns = document.querySelectorAll('.filter-btn');
+const teamSelect = document.getElementById('teamSelect');
+const draftBoard = document.getElementById('draftBoard');
+const timelineToggle = document.getElementById('timelineToggle');
+
+let activeFilter = 'ALL';
+let activeTeam = 'ALL';
+let expansionNames = ['Expansion Team A', 'Expansion Team B'];
+let draftViewMode = ['order', 'order']; // per expansion team: 'order' or 'lineup'
+
+// Populate the team dropdown once from TEAMS (sorted alphabetically for easy scanning)
+TEAMS.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(team => {
+  const opt = document.createElement('option');
+  opt.value = team.name;
+  opt.textContent = `From: ${team.name}`;
+  teamSelect.appendChild(opt);
+});
+
+function fmtVal(v){
+  if (v < 0) return '—';
+  return Math.round(v).toLocaleString();
+}
+
+// Contention-window nudge: doesn't change displayed value, only sort order.
+// Contenders (high playoff odds) lean toward proven vets (age 28+);
+// rebuilders (low playoff odds) lean toward youth (age <=23).
+function timelineWeight(p, team){
+  if (!timelineToggle.checked) return p.value;
+  if (p.age == null) return p.value;
+  const bias = (team.playoffOdds / 100) - 0.5; // -0.5 .. +0.5
+  let mult = 1;
+  if (p.age <= 23) mult = 1 - bias * 0.3;
+  else if (p.age >= 28) mult = 1 + bias * 0.3;
+  return p.value * mult;
+}
+
+function buildLineup(roster){
+  // roster assumed sorted desc by value already
+  const need = {QB:2, RB:3, WR:3, TE:1};
+  const filled = {QB:0, RB:0, WR:0, TE:0};
+  const starters = [];
+  const leftover = [];
+  roster.forEach(p => {
+    if ((filled[p.pos]||0) < (need[p.pos]||0)){
+      filled[p.pos] = (filled[p.pos]||0) + 1;
+      starters.push({...p, slotLabel: p.pos + filled[p.pos]});
+    } else {
+      leftover.push(p);
+    }
+  });
+  let flexN = 0;
+  const bench = [];
+  leftover.forEach(p => {
+    if (flexN < 2 && FLEX_POS.has(p.pos)){
+      flexN++;
+      starters.push({...p, slotLabel: 'FLEX' + flexN});
+    } else {
+      bench.push(p);
+    }
+  });
+  const order = {QB1:0,QB2:1,RB1:2,RB2:3,RB3:4,WR1:5,WR2:6,WR3:7,TE1:8,FLEX1:9,FLEX2:10};
+  starters.sort((a,b) => (order[a.slotLabel] ?? 99) - (order[b.slotLabel] ?? 99));
+  return {starters, bench};
+}
+
+function simulateSnakeDraft(pool){
+  // pool: array sorted desc by value already
+  const rosters = [[], []];
+  let round = 0;
+  let i = 0;
+  const items = pool.slice();
+  let pickNo = 0;
+  while (i < items.length){
+    const order = (round % 2 === 0) ? [0,1] : [1,0];
+    for (const teamIdx of order){
+      if (i >= items.length) break;
+      pickNo++;
+      const p = items[i++];
+      rosters[teamIdx].push({...p, pickNo, round: round+1});
+    }
+    round++;
+  }
+  return rosters;
+}
+
+function draftRow(p, labelHtml){
+  const li = document.createElement('li');
+  li.className = 'slot-' + p.pos;
+  li.innerHTML = `
+    ${labelHtml}
+    <span class="pname" title="${p.name}">${p.name}</span>
+    <span class="ptag tag-${p.pos}">${p.pos}</span>
+    <span class="pval mono">${fmtVal(p.value)}</span>
+  `;
+  return li;
+}
+
+function renderDraftBoard(pool){
+  const rosters = simulateSnakeDraft(pool);
+  draftBoard.innerHTML = '';
+  rosters.forEach((roster, idx) => {
+    const card = document.createElement('div');
+    card.className = 'draft-card';
+
+    const head = document.createElement('div');
+    head.className = 'draft-card-head';
+    head.innerHTML = `
+      <input class="draft-name-input" value="${expansionNames[idx]}" data-idx="${idx}">
+      <span class="draft-card-count mono">${roster.length} players</span>
+      <button class="lineup-toggle-btn" data-idx="${idx}">${draftViewMode[idx] === 'order' ? 'Show Starting Lineup' : 'Show Draft Order'}</button>
+    `;
+    card.appendChild(head);
+
+    if (roster.length === 0){
+      const div = document.createElement('div');
+      div.className = 'draft-empty';
+      div.textContent = 'Pool is empty at this protect level \u2014 nothing left to draft.';
+      card.appendChild(div);
+    } else if (draftViewMode[idx] === 'order'){
+      const list = document.createElement('ul');
+      list.className = 'draft-list';
+      roster.forEach(p => {
+        const label = `<span class="pick-label">${p.round}.${String(p.pickNo).padStart(2,'0')}</span>`;
+        list.appendChild(draftRow(p, label));
+      });
+      card.appendChild(list);
+    } else {
+      const {starters, bench} = buildLineup(roster);
+      const list = document.createElement('ul');
+      list.className = 'draft-list';
+      starters.forEach(p => {
+        const label = `<span class="slot-label">${p.slotLabel}</span>`;
+        list.appendChild(draftRow(p, label));
+      });
+      card.appendChild(list);
+
+      const div = document.createElement('div');
+      div.className = 'bench-divider';
+      div.textContent = `Bench (${bench.length})`;
+      card.appendChild(div);
+
+      const benchList = document.createElement('ul');
+      benchList.className = 'draft-list';
+      bench.forEach((p,i) => {
+        const label = `<span class="rank mono">${i+1}</span>`;
+        benchList.appendChild(draftRow(p, label));
+      });
+      card.appendChild(benchList);
+    }
+    draftBoard.appendChild(card);
+  });
+
+  draftBoard.querySelectorAll('.draft-name-input').forEach(inp => {
+    inp.addEventListener('input', (e) => {
+      expansionNames[parseInt(e.target.dataset.idx,10)] = e.target.value;
+    });
+  });
+  draftBoard.querySelectorAll('.lineup-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.idx,10);
+      draftViewMode[idx] = draftViewMode[idx] === 'order' ? 'lineup' : 'order';
+      render();
+    });
+  });
+}
+
+function render(){
+  const n = parseInt(slider.value, 10);
+  readout.innerHTML = n + '<small>protected</small>';
+  const pct = (n/25*100).toFixed(1) + '%';
+  slider.style.setProperty('--pct', pct);
+
+  board.innerHTML = '';
+  let pool = [];
+
+  TEAMS.forEach(team => {
+    // pure value order (for comparing whether the timeline nudge moved anyone)
+    const pureOrder = team.players; // already sorted desc by value at build time
+    const pureRank = new Map(pureOrder.map((p,i) => [p.name, i]));
+
+    const timelineOrder = team.players.slice().sort((a,b) => timelineWeight(b,team) - timelineWeight(a,team));
+
+    const protected_ = timelineOrder.slice(0, n);
+    const exposed = timelineOrder.slice(n);
+    exposed.forEach(p => pool.push({...p, team_name: team.name}));
+
+    const card = document.createElement('div');
+    card.className = 'team-card';
+
+    const tierClass = TIER_CLASS[team.tier] || 'tier-Frisky';
+    const head = document.createElement('div');
+    head.className = 'team-head';
+    head.innerHTML = `
+      <div class="team-owner">${team.owner}</div>
+      <div class="team-name">${team.name}</div>
+      <div class="team-total mono">${team.players.length} rostered &middot; ${exposed.length} exposed</div>
+      <span class="tier-badge ${tierClass}">${team.tier}</span><span class="odds-note">${team.playoffOdds}% playoff odds</span>
+    `;
+    card.appendChild(head);
+
+    const list = document.createElement('ul');
+    list.className = 'protect-list';
+    if (protected_.length === 0){
+      const div = document.createElement('div');
+      div.className = 'empty-note';
+      div.textContent = 'Nobody protected yet.';
+      card.appendChild(div);
+    } else {
+      protected_.forEach((p, i) => {
+        const li = document.createElement('li');
+        li.className = 'slot-' + p.pos;
+        const pureIdx = pureRank.get(p.name);
+        let moveHtml = '';
+        if (timelineToggle.checked && pureIdx !== i){
+          moveHtml = pureIdx > i
+            ? `<span class="move-up" title="Moved up from #${pureIdx+1} by pure value">&#9650;</span>`
+            : `<span class="move-down" title="Moved down from #${pureIdx+1} by pure value">&#9660;</span>`;
+        }
+        li.innerHTML = `
+          <span class="rank mono">${i+1}</span>
+          <span class="pname" title="${p.name}">${p.name}</span>
+          ${moveHtml}
+          <span class="ptag tag-${p.pos}">${p.pos}</span>
+          <span class="pval mono">${fmtVal(p.value)}</span>
+        `;
+        list.appendChild(li);
+      });
+      card.appendChild(list);
+    }
+    board.appendChild(card);
+  });
+
+  pool.sort((a,b) => b.value - a.value);
+
+  renderDraftBoard(pool);
+
+  let filtered = pool;
+  if (activeTeam !== 'ALL') filtered = filtered.filter(p => p.team_name === activeTeam);
+  if (activeFilter === 'FLEX') filtered = filtered.filter(p => FLEX_POS.has(p.pos));
+  else if (activeFilter !== 'ALL') filtered = filtered.filter(p => p.pos === activeFilter);
+
+  poolSubText.textContent = activeTeam === 'ALL'
+    ? "Everyone left unprotected across all 10 rosters at this threshold, ranked by consensus dynasty value."
+    : `Best players left on ${activeTeam}'s own roster at this protect level \u2014 what they'd still have to work with if nobody trades for these guys.`;
+
+  poolCount.textContent = filtered.length;
+  poolBody.innerHTML = '';
+  filtered.forEach((p, i) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="rankcol mono">${i+1}</td>
+      <td>${p.name}</td>
+      <td><span class="ptag tag-${p.pos}">${p.pos}</span></td>
+      <td class="teamcol">${p.team || '—'}</td>
+      <td class="teamcol">${p.team_name}</td>
+      <td class="valcol">${fmtVal(p.value)}</td>
+    `;
+    poolBody.appendChild(tr);
+  });
+}
+
+slider.addEventListener('input', render);
+timelineToggle.addEventListener('change', render);
+teamSelect.addEventListener('change', () => {
+  activeTeam = teamSelect.value;
+  render();
+});
+filterBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    filterBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.f;
+    render();
+  });
+});
+
+render();
+</script>
+
+</body>
+</html>

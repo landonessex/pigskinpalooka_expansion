@@ -200,6 +200,12 @@
     color: var(--gold-dim);
     margin-top: 4px;
   }
+  .qb-tax-note{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 10px;
+    color: var(--red);
+    margin-top: 3px;
+  }
   .tier-badge{
     display:inline-block;
     font-family:'JetBrains Mono',monospace;
@@ -608,6 +614,10 @@
     <input type="checkbox" id="timelineToggle" checked>
     Factor in contention window &mdash; contenders lean toward proven vets, rebuilders lean toward youth
   </label>
+  <label class="timeline-toggle">
+    <input type="checkbox" id="qbTaxToggle">
+    QB hoarding tax &mdash; keeping 3+ QBs costs a protect slot (1 less per QB beyond 2)
+  </label>
   <div class="cap-row">
     <label class="cap-label">Max QB protects<select id="maxQbSelect"></select></label>
     <span class="cap-hint">(used when the position cap below is off)</span>
@@ -719,7 +729,7 @@ function normName(s){
   return s.toLowerCase().replace(/[.'-]/g, '').replace(/\s+/g, ' ').trim();
 }
 const STARTING_QBS = new Set([
-  'sam darnold','kirk cousins','daniel jones','jacoby brissett','aaron rodgers','geno smith',
+  'sam darnold','drake maye','jordan love','kirk cousins','daniel jones','jacoby brissett','aaron rodgers','geno smith',
   'kyler murray','joe burrow','patrick mahomes','josh allen','lamar jackson',
   'cam ward','malik willis','bo nix','justin herbert','deshaun watson',
   'cj stroud','trevor lawrence','dak prescott','jaxson dart','jalen hurts',
@@ -770,6 +780,7 @@ const teamSelect = document.getElementById('teamSelect');
 const draftBoard = document.getElementById('draftBoard');
 const draftSubText = document.getElementById('draftSubText');
 const timelineToggle = document.getElementById('timelineToggle');
+const qbTaxToggle = document.getElementById('qbTaxToggle');
 const maxQbSelect = document.getElementById('maxQbSelect');
 const capToggle = document.getElementById('capToggle');
 const capQB = document.getElementById('capQB');
@@ -896,6 +907,31 @@ function selectProtects(sortedPlayers, n, caps){
   const protectedNames = new Set(protected_.map(p => p.name));
   const exposed = sortedPlayers.filter(p => !protectedNames.has(p.name));
   return { protected_, exposed };
+}
+
+// Applies the optional "QB hoarding tax": every QB kept beyond 2 costs the
+// team one fewer total protect slot. Since trimming the tail could itself
+// drop a QB and change the tax owed, iterate to a stable point (converges
+// almost always in 1-2 passes since cuts only ever remove the lowest-value
+// player still in the list).
+function selectProtectsWithQbTax(sortedPlayers, n, caps, taxEnabled){
+  if (!taxEnabled){
+    const result = selectProtects(sortedPlayers, n, caps);
+    return { ...result, effectiveN: n, qbTax: 0 };
+  }
+  let currentN = n;
+  let result = selectProtects(sortedPlayers, currentN, caps);
+  for (let iter = 0; iter < 8; iter++){
+    const qbCount = result.protected_.filter(p => p.pos === 'QB').length;
+    const tax = Math.max(0, qbCount - 2);
+    const newN = Math.max(0, n - tax);
+    if (newN === currentN) break;
+    currentN = newN;
+    result = selectProtects(sortedPlayers, currentN, caps);
+  }
+  const finalQbCount = result.protected_.filter(p => p.pos === 'QB').length;
+  const qbTax = Math.max(0, finalQbCount - 2);
+  return { ...result, effectiveN: currentN, qbTax };
 }
 
 function buildLineup(roster){
@@ -1221,7 +1257,7 @@ function render(){
 
     const timelineOrder = team.players.slice().sort((a,b) => timelineWeight(b,team) - timelineWeight(a,team));
 
-    const { protected_, exposed } = selectProtects(timelineOrder, n, caps);
+    const { protected_, exposed, effectiveN, qbTax } = selectProtectsWithQbTax(timelineOrder, n, caps, qbTaxToggle.checked);
     exposed.forEach(p => pool.push({...p, team_name: team.name}));
 
     lastExistingRosters.push({
@@ -1233,6 +1269,9 @@ function render(){
     card.className = 'team-card';
 
     const tierClass = TIER_CLASS[team.tier] || 'tier-Frisky';
+    const taxNote = qbTax > 0
+      ? `<div class="qb-tax-note">&#9888; ${qbTax} QB${qbTax===1?'':'s'} beyond 2 kept \u2014 protecting ${effectiveN} instead of ${n}</div>`
+      : '';
     const head = document.createElement('div');
     head.className = 'team-head';
     head.innerHTML = `
@@ -1240,6 +1279,7 @@ function render(){
       <div class="team-name">${team.name}</div>
       <div class="team-total mono">${team.players.length} rostered &middot; ${exposed.length} exposed</div>
       <span class="tier-badge ${tierClass}">${team.tier}</span><span class="odds-note">${team.playoffOdds}% playoff odds</span>
+      ${taxNote}
     `;
     card.appendChild(head);
 
@@ -1358,6 +1398,7 @@ function applySliderLock(){
 
 slider.addEventListener('input', render);
 timelineToggle.addEventListener('change', render);
+qbTaxToggle.addEventListener('change', render);
 maxQbSelect.addEventListener('change', () => {
   applySliderLock();
   render();

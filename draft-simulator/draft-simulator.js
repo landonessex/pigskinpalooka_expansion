@@ -50,7 +50,7 @@ const state = {
   auctionPhase: 'nominate', // 'nominate' | 'bid'
   currentNominee: null,
   currentNominator: null,
-  userBidSubmitted: null,
+  liveAuction: null, // { player, currentPrice, currentLeader, aiCeilings }
   // filters
   snakeFilter: 'ALL', snakeSearch: '',
   auctionFilter: 'ALL', auctionSearch: '',
@@ -186,11 +186,18 @@ function draftPlayerSnake(teamName, player){
 function logSnake(teamName, player){
   const log = document.getElementById('snakeLog');
   const li = document.createElement('li');
-  if (teamName === state.userTeam) li.className = 'you';
+  const isYou = teamName === state.userTeam;
+  if (isYou) li.className = 'you';
   const round = state.round;
   const overallPick = state.pickNo + 1;
-  li.innerHTML = `<span class="pick-tag">${round}.${String((overallPick-1)%NUM_TEAMS+1).padStart(2,'0')}</span> ${teamName}${teamName===state.userTeam?' (you)':''} selects <strong>${player.name}</strong> <span style="color:var(--text-faint)">(${player.pos})</span>`;
+  const pickTag = `${round}.${String((overallPick-1)%NUM_TEAMS+1).padStart(2,'0')}`;
+  const line = `<span class="pick-tag">${pickTag}</span> ${teamName}${isYou?' (you)':''} selects <strong>${player.name}</strong> <span style="color:var(--text-faint)">(${player.pos})</span>`;
+  li.innerHTML = line;
   log.insertBefore(li, log.firstChild);
+
+  const banner = document.getElementById('snakeLastPick');
+  banner.classList.toggle('you', isYou);
+  banner.querySelector('.lp-content').innerHTML = line;
 }
 
 function runSnakePick(){
@@ -342,21 +349,41 @@ function computeAiBid(p, team){
   return Math.max(0, Math.min(cap, desiredBid(p, team)));
 }
 
-function computeAllAiBids(player){
-  const bids = {};
+// Fixed per-player AI ceilings (their true max willingness to pay), computed
+// once when a player is nominated. The live auction never reveals these —
+// AI teams only ever raise the minimum needed to retake the lead, exactly
+// like real proxy bidding.
+function computeAiCeilings(player){
+  const ceilings = {};
   Object.values(state.teams).forEach(team => {
-    if (team.name === state.userTeam) return; // user's bid comes from the UI
-    bids[team.name] = computeAiBid(player, team);
+    if (team.name === state.userTeam) return;
+    ceilings[team.name] = computeAiBid(player, team);
   });
-  return bids;
+  return ceilings;
 }
 
-function resolveBids(bids){
-  bids.sort((a,b) => b.amount - a.amount);
-  const winner = bids[0];
-  const second = bids[1] ? bids[1].amount : 0;
-  const price = Math.max(1, Math.min(winner.amount, second + 1));
-  return { teamName: winner.teamName, price };
+// Full equilibrium among AI teams alone (used right after nomination, since
+// several AI could compete with each other before the user even acts).
+function resolveFullAiCompetition(ceilings){
+  const entries = Object.entries(ceilings).filter(([,ceil]) => ceil >= 1);
+  if (entries.length === 0) return null;
+  entries.sort((a,b) => b[1] - a[1]);
+  const [winnerName, winnerCeil] = entries[0];
+  const secondCeil = entries[1] ? entries[1][1] : 0;
+  const price = Math.max(1, Math.min(winnerCeil, secondCeil + 1));
+  return { name: winnerName, price };
+}
+
+// Does any AI (other than excludeName) want to beat minPrice? If several do,
+// resolve their own mini-equilibrium too so only one clean raise is shown.
+function bestAiChallenge(ceilings, minPrice, excludeName){
+  const entries = Object.entries(ceilings).filter(([name,ceil]) => name !== excludeName && ceil > minPrice);
+  if (entries.length === 0) return null;
+  entries.sort((a,b) => b[1] - a[1]);
+  const [name, ceil] = entries[0];
+  const second = entries[1] ? entries[1][1] : minPrice;
+  const price = Math.max(minPrice + 1, Math.min(ceil, second + 1));
+  return { name, price };
 }
 
 function removeFromPool(player){
@@ -377,66 +404,83 @@ function awardPlayer(teamName, player, price){
   team.budget -= price;
   team.drafted.push({...player, pricePaid: price});
   removeFromPool(player);
-  logAuction(`${player.name} to ${teamName}${teamName===state.userTeam?' (you)':''} for $${price}`, teamName===state.userTeam);
+  const isYou = teamName === state.userTeam;
+  const line = `<strong>${player.name}</strong> to ${teamName}${isYou?' (you)':''} for $${price}`;
+  logAuction(line, isYou);
+  const banner = document.getElementById('auctionLastPick');
+  banner.classList.toggle('you', isYou);
+  banner.querySelector('.lp-content').innerHTML = line;
   renderBudgets();
   if (teamName === state.userTeam) renderAuctionYourRoster();
 }
 
-function finalizeBidding(player){
+function finalizeLiveAuction(){
   clearInterval(state.timerInterval);
-  const aiBids = computeAllAiBids(player);
-  const userBidAmt = state.userBidSubmitted;
-
-  const allBids = [];
-  Object.entries(aiBids).forEach(([name, amt]) => { if (amt >= 1) allBids.push({teamName: name, amount: amt}); });
-  if (userBidAmt && userBidAmt >= 1) allBids.push({teamName: state.userTeam, amount: userBidAmt});
-
   document.getElementById('nominationArea').innerHTML = '';
   document.getElementById('auctionTimer').classList.add('hidden');
-  state.userBidSubmitted = null;
-
-  if (allBids.length === 0){
-    const nomTeam = state.teams[state.currentNominator];
-    if (nomTeam.drafted.length < TOTAL_ROUNDS && maxAffordable(nomTeam) >= 1){
-      awardPlayer(state.currentNominator, player, 1);
-    } else {
-      logAuction(`${player.name} goes unclaimed \u2014 no bids.`);
-      removeFromPool(player);
-    }
-  } else {
-    const result = resolveBids(allBids);
-    awardPlayer(result.teamName, player, result.price);
-  }
-
+  const { player, currentPrice, currentLeader } = state.liveAuction;
+  awardPlayer(currentLeader, player, currentPrice);
+  state.liveAuction = null;
   state.auctionPhase = 'nominate';
   state.nominationTurnIdx++;
   runNominationTurn();
 }
 
-function showBidBoxForUser(player){
+function renderLiveBidUI(){
+  const { player, currentPrice, currentLeader } = state.liveAuction;
+  const area = document.getElementById('nominationArea');
+  renderAuctionPool();
+
+  if (currentLeader === state.userTeam){
+    // Nobody's contesting the user right now — nothing left to decide.
+    area.innerHTML = `<div class="bid-box"><h3>You're leading on ${player.name} at $${currentPrice}</h3><p style="color:var(--text-dim);font-size:13px;">No one else wants it at this price \u2014 wrapping up.</p></div>`;
+    document.getElementById('auctionTimer').classList.add('hidden');
+    setTimeout(finalizeLiveAuction, 700);
+    return;
+  }
+
   const team = state.teams[state.userTeam];
   const cap = Math.max(0, Math.floor(maxAffordable(team)));
-  const area = document.getElementById('nominationArea');
+  const minRaise = currentPrice + 1;
+  const canRaise = cap >= minRaise;
+
   area.innerHTML = `
     <div class="bid-box">
-      <h3>${player.name} <span class="ptag tag-${player.pos}">${player.pos}</span> nominated by ${state.currentNominator}${state.currentNominator===state.userTeam?' (you)':''}</h3>
-      <div class="value-ref">DLF auction value: $${auctionValueOf(player).toFixed(2)} &middot; your max affordable bid: $${cap}</div>
+      <h3>${player.name} <span class="ptag tag-${player.pos}">${player.pos}</span> \u2014 ${currentLeader} leads at $${currentPrice}</h3>
+      <div class="value-ref">DLF auction value: $${Math.round(auctionValueOf(player))} &middot; your max affordable bid: $${cap}</div>
       <div class="bid-input-row">
-        <input type="number" id="userBidInput" min="1" max="${Math.max(1,cap)}" step="1" placeholder="$ max bid">
-        <button class="bid-submit-btn" id="submitBidBtn">Submit Bid</button>
+        <input type="number" id="userBidInput" min="${minRaise}" max="${Math.max(minRaise,cap)}" step="1" placeholder="$${minRaise}+" ${canRaise?'':'disabled'}>
+        <button class="bid-submit-btn" id="submitBidBtn" ${canRaise?'':'disabled'}>Raise</button>
         <button class="skip-btn" id="passBidBtn">Pass</button>
       </div>
+      ${canRaise?'':'<p style="color:var(--text-faint);font-size:11px;margin-top:8px;">You can\'t afford to top this bid and still fill your remaining slots.</p>'}
     </div>
   `;
-  document.getElementById('submitBidBtn').addEventListener('click', () => {
-    const val = parseInt(document.getElementById('userBidInput').value, 10);
-    state.userBidSubmitted = (isNaN(val) || val < 1) ? null : Math.min(val, Math.max(1,cap));
-    finalizeBidding(player);
-  });
-  document.getElementById('passBidBtn').addEventListener('click', () => {
-    state.userBidSubmitted = null;
-    finalizeBidding(player);
-  });
+  if (canRaise){
+    document.getElementById('submitBidBtn').addEventListener('click', () => {
+      const val = parseInt(document.getElementById('userBidInput').value, 10);
+      const raiseTo = (isNaN(val) || val < minRaise) ? minRaise : Math.min(val, cap);
+      userRaise(raiseTo);
+    });
+  }
+  document.getElementById('passBidBtn').addEventListener('click', finalizeLiveAuction);
+}
+
+function userRaise(amount){
+  clearInterval(state.timerInterval);
+  state.liveAuction.currentPrice = amount;
+  state.liveAuction.currentLeader = state.userTeam;
+  logAuction(`You raise to $${amount}`, true);
+  const challenge = bestAiChallenge(state.liveAuction.aiCeilings, amount, state.userTeam);
+  if (challenge){
+    state.liveAuction.currentPrice = challenge.price;
+    state.liveAuction.currentLeader = challenge.name;
+    logAuction(`${challenge.name} comes back at $${challenge.price}`);
+  }
+  renderLiveBidUI();
+  if (state.liveAuction.currentLeader !== state.userTeam){
+    startAuctionTimer(finalizeLiveAuction);
+  }
 }
 
 function beginBidding(nominatorName, player){
@@ -444,20 +488,36 @@ function beginBidding(nominatorName, player){
   state.auctionPhase = 'bid';
   state.currentNominee = player;
   state.currentNominator = nominatorName;
-  renderAuctionPool();
+
+  const aiCeilings = computeAiCeilings(player);
+  let currentPrice = 1;
+  let currentLeader = nominatorName;
+  const initial = resolveFullAiCompetition(aiCeilings);
+  if (initial){
+    currentPrice = initial.price;
+    currentLeader = initial.name;
+    if (currentLeader !== nominatorName){
+      logAuction(`${nominatorName} opens at $1 \u2014 ${currentLeader} jumps in at $${currentPrice}`);
+    }
+  }
+  state.liveAuction = { player, currentPrice, currentLeader, aiCeilings };
 
   const userTeamObj = state.teams[state.userTeam];
   const userEligible = userTeamObj.drafted.length < TOTAL_ROUNDS && maxAffordable(userTeamObj) >= 1;
 
-  if (userEligible){
-    showBidBoxForUser(player);
-    startAuctionTimer(() => finalizeBidding(player));
-  } else {
-    document.getElementById('nominationArea').innerHTML = `<div class="bid-box"><h3>${player.name} nominated by ${nominatorName}</h3><p style="color:var(--text-dim);">You're full or out of budget for this one \u2014 sitting it out.</p></div>`;
+  if (!userEligible){
+    document.getElementById('nominationArea').innerHTML = `<div class="bid-box"><h3>${player.name} \u2014 ${currentLeader} at $${currentPrice}</h3><p style="color:var(--text-dim);">You're full or out of budget \u2014 sitting this one out.</p></div>`;
     document.getElementById('auctionTimer').classList.add('hidden');
-    setTimeout(() => finalizeBidding(player), 700);
+    setTimeout(finalizeLiveAuction, 700);
+    return;
+  }
+
+  renderLiveBidUI();
+  if (currentLeader !== state.userTeam){
+    startAuctionTimer(finalizeLiveAuction);
   }
 }
+
 
 function runNominationTurn(){
   if (state.pool.length === 0 || allTeamsFull()){ endAuctionDraft(); return; }
@@ -534,6 +594,8 @@ function renderBudgets(){
     div.innerHTML = `<div class="budget-name">${name}${name===state.userTeam?' (you)':''}</div><div class="budget-amt mono">$${t.budget}</div><div class="budget-slots mono">${t.drafted.length}/${TOTAL_ROUNDS} slots</div>`;
     grid.appendChild(div);
   });
+  const you = state.teams[state.userTeam];
+  document.getElementById('auctionYourStatusText').textContent = `$${you.budget} \u00b7 ${you.drafted.length}/${TOTAL_ROUNDS} slots`;
 }
 
 function renderAuctionYourRoster(){
@@ -564,7 +626,7 @@ function renderAuctionPool(){
       <td>${p.name}</td>
       <td>${star}<span class="ptag tag-${p.pos}">${p.pos}</span></td>
       <td style="color:var(--text-faint);font-size:12px;">${p.team||'—'}</td>
-      <td class="mono" style="text-align:right;color:var(--gold-dim);">$${auctionValueOf(p).toFixed(2)}</td>
+      <td class="mono" style="text-align:right;color:var(--gold-dim);">$${Math.round(auctionValueOf(p))}</td>
       <td><button class="draft-btn" ${canNominate?'':'disabled'} data-name="${p.name}">Nominate</button></td>
     `;
     body.appendChild(tr);
@@ -606,14 +668,54 @@ function showEndScreen(){
   const summary = document.getElementById('endSummary');
   const rows = Object.values(state.teams).map(t => {
     const totalVal = t.baseline.reduce((s,p) => s + p.value, 0) + t.drafted.reduce((s,p) => s + p.value, 0);
-    return { name: t.name, totalVal, draftedCount: t.drafted.length, isUser: t.name === state.userTeam };
+    return { team: t, name: t.name, totalVal, draftedCount: t.drafted.length, isUser: t.name === state.userTeam };
   }).sort((a,b) => b.totalVal - a.totalVal);
 
-  let html = '<table style="max-width:600px;margin:0 auto;"><thead><tr><th style="text-align:left;">Team</th><th style="text-align:center;">Picked</th><th style="text-align:right;">Final Value</th></tr></thead><tbody>';
+  let html = '<table style="max-width:600px;margin:0 auto 40px;"><thead><tr><th style="text-align:left;">Team</th><th style="text-align:center;">Picked</th><th style="text-align:right;">Final Value</th></tr></thead><tbody>';
   rows.forEach((r,i) => {
     html += `<tr style="${r.isUser?'color:var(--gold);font-weight:600;':''}"><td style="text-align:left;">${i+1}. ${r.name}${r.isUser?' (you)':''}</td><td style="text-align:center;" class="mono">${r.draftedCount}</td><td style="text-align:right;" class="mono">${Math.round(r.totalVal).toLocaleString()}</td></tr>`;
   });
   html += '</tbody></table>';
+
+  html += '<h3 style="text-transform:uppercase;font-size:16px;margin-bottom:16px;">Final Rosters</h3>';
+  html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px;text-align:left;">';
+  rows.forEach(r => {
+    const full = r.team.baseline.concat(r.team.drafted).slice().sort((a,b) => b.value - a.value);
+    html += `<div class="panel" style="${r.isUser?'border-color:var(--gold);':''}">`;
+    html += `<div class="panel-head" style="${r.isUser?'color:var(--gold);':''}">${r.name}${r.isUser?' (you)':''} <span class="mono" style="font-size:11px;color:var(--text-faint);">${full.length} players</span></div>`;
+    html += '<div class="panel-body"><ul class="roster-list" style="max-height:none;">';
+    full.forEach((p,i) => {
+      const star = isStarterQB(p) ? '<span class="qb-star">\u2736</span>' : '';
+      const priceTag = p.pricePaid != null ? `$${p.pricePaid}` : Math.round(p.value);
+      html += `<li><span class="slotnum mono">${i+1}</span><span class="pname">${star}${p.name}</span><span class="ptag tag-${p.pos}">${p.pos}</span><span class="pval mono">${priceTag}</span></li>`;
+    });
+    html += '</ul></div></div>';
+  });
+  html += '</div>';
+
   summary.innerHTML = html;
 }
+
+// ===================================================================
+// Mobile tab bar (Available / My Team / Log / Budgets)
+// On desktop the .tab-panel elements are just always visible in their
+// normal grid position; below 900px only the active one shows, switched
+// via these tabs instead of relying on scroll position.
+// ===================================================================
+function setupTabs(tabBarEl){
+  if (!tabBarEl) return;
+  const screen = tabBarEl.closest('.draft-screen');
+  tabBarEl.querySelectorAll('.mobile-tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBarEl.querySelectorAll('.mobile-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      screen.querySelectorAll('.tab-panel').forEach(p => {
+        p.classList.toggle('tab-active', p.dataset.tab === btn.dataset.tab);
+      });
+    });
+  });
+}
+setupTabs(document.getElementById('snakeTabs'));
+setupTabs(document.getElementById('auctionTabs'));
+
 

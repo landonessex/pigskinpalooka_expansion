@@ -913,21 +913,38 @@ function selectProtects(sortedPlayers, n, caps){
 }
 
 // Applies the optional "QB hoarding tax": every QB kept beyond 2 costs the
-// team one fewer total protect slot. Evaluated once against the team's
-// originally-desired N (not re-checked after trimming) — otherwise a QB
-// sitting right at the cutoff can flip the tax on and off forever, since
-// removing the marginal slot may itself remove the QB that triggered it.
+// team one fewer total protect slot. The tax is paid by dropping the
+// lowest-value NON-QB players — not by just re-slicing the same sorted list,
+// which could accidentally cut the very QB that triggered the tax in the
+// first place (defeating the point: you wanted to keep it, not lose it for
+// free). Evaluated once against the team's originally-desired N.
 function selectProtectsWithQbTax(sortedPlayers, n, caps, taxEnabled){
-  if (!taxEnabled){
-    const result = selectProtects(sortedPlayers, n, caps);
-    return { ...result, effectiveN: n, qbTax: 0, qbCountAtN: null };
-  }
   const initial = selectProtects(sortedPlayers, n, caps);
+  if (!taxEnabled){
+    return { ...initial, effectiveN: n, qbTax: 0, qbCountAtN: null };
+  }
   const qbCountAtN = initial.protected_.filter(p => p.pos === 'QB').length;
   const qbTax = Math.max(0, qbCountAtN - 2);
-  const effectiveN = Math.max(0, n - qbTax);
-  const result = qbTax > 0 ? selectProtects(sortedPlayers, effectiveN, caps) : initial;
-  return { ...result, effectiveN, qbTax, qbCountAtN };
+  if (qbTax === 0){
+    return { ...initial, effectiveN: n, qbTax: 0, qbCountAtN };
+  }
+  const qbs = initial.protected_.filter(p => p.pos === 'QB');
+  const nonQbs = initial.protected_.filter(p => p.pos !== 'QB');
+  const keepNonQbCount = Math.max(0, nonQbs.length - qbTax);
+  const keptNonQbs = nonQbs.slice(0, keepNonQbCount);      // drops the lowest-value non-QBs
+  const droppedNonQbCount = nonQbs.length - keptNonQbs.length;
+  // Extremely unlikely fallback: not enough non-QBs to absorb the full tax
+  // (e.g. an almost-all-QB roster) — trim the worst QB(s) too rather than
+  // leave the roster oversized.
+  let finalQbs = qbs;
+  const shortfall = qbTax - droppedNonQbCount;
+  if (shortfall > 0){
+    finalQbs = qbs.slice(0, Math.max(0, qbs.length - shortfall));
+  }
+  const finalNames = new Set([...finalQbs, ...keptNonQbs].map(p => p.name));
+  const protected_ = sortedPlayers.filter(p => finalNames.has(p.name)); // preserves original order
+  const exposed = sortedPlayers.filter(p => !finalNames.has(p.name));
+  return { protected_, exposed, effectiveN: protected_.length, qbTax, qbCountAtN };
 }
 
 function buildLineup(roster){

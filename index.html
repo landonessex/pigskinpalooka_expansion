@@ -659,6 +659,14 @@
         <div class="pool-sub" id="draftSubText">Best-player-available, alternating every round, drafting straight out of the pool above until each new roster matches everyone else's shape (11 starters / 14 bench / 4 taxi &mdash; 29 total).</div>
       </div>
     </div>
+    <div class="cap-row" style="margin:0 0 16px;">
+      <label class="cap-checkbox">
+        <input type="checkbox" id="fairnessCapToggle">
+        Cap max players either new team can take from any one original team:
+      </label>
+      <label class="cap-label"><select id="fairnessCapSelect" disabled></select></label>
+      <span class="cap-hint">e.g. capped at 3, one team ends up giving up only 2 (29 needed &divide; 10 teams &divide; 3-cap doesn't split evenly)</span>
+    </div>
     <div class="draft-board" id="draftBoard"></div>
   </div>
 
@@ -743,6 +751,8 @@ const capTE = document.getElementById('capTE');
 const capFLEX = document.getElementById('capFLEX');
 const capSelects = [capQB, capRB, capWR, capTE, capFLEX];
 const rankingsBody = document.getElementById('rankingsBody');
+const fairnessCapToggle = document.getElementById('fairnessCapToggle');
+const fairnessCapSelect = document.getElementById('fairnessCapSelect');
 
 let activeFilter = 'ALL';
 let activeTeam = 'ALL';
@@ -780,6 +790,15 @@ populateCapSelect(capFLEX, 10, 'Infinity');
   maxQbSelect.appendChild(opt);
 });
 maxQbSelect.value = 'Infinity';
+
+// Fairness cap dropdown: max players either new team can take from one original team
+[2, 3, 4, 5].forEach(v => {
+  const opt = document.createElement('option');
+  opt.value = String(v);
+  opt.textContent = String(v);
+  fairnessCapSelect.appendChild(opt);
+});
+fairnessCapSelect.value = '3';
 
 // Populate the team dropdown once from TEAMS (sorted alphabetically for easy scanning)
 TEAMS.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(team => {
@@ -884,27 +903,38 @@ function buildLineup(roster){
 // everyone else's shape instead of absorbing the entire leftover pool.
 // Anyone in the pool that neither new team drafts stays with their original
 // team (goes back to that team's bench) rather than hitting free agency.
-function simulateSnakeDraft(pool, cap){
+// perOriginalCap (optional): max players either new team may take from any
+// single original team, so nobody gets picked clean out by one new roster.
+function simulateSnakeDraft(pool, cap, perOriginalCap){
   const rosters = [[], []];
   const capped = [false, false];
+  const takenCount = [new Map(), new Map()];
+  const available = pool.slice(); // sorted desc by value; we splice out of this
   let round = 0;
-  let i = 0;
-  const items = pool.slice();
   let pickNo = 0;
-  while (i < items.length && !(capped[0] && capped[1])){
+  while (available.length > 0 && !(capped[0] && capped[1])){
     const order = (round % 2 === 0) ? [0,1] : [1,0];
     for (const teamIdx of order){
       if (capped[teamIdx]) continue;
-      if (i >= items.length) break;
+      let foundIdx = -1;
+      for (let idx = 0; idx < available.length; idx++){
+        const p = available[idx];
+        const cnt = takenCount[teamIdx].get(p.team_name) || 0;
+        if (perOriginalCap == null || cnt < perOriginalCap){
+          foundIdx = idx;
+          break;
+        }
+      }
+      if (foundIdx === -1) continue; // nothing eligible for this team right now
+      const p = available.splice(foundIdx, 1)[0];
       pickNo++;
-      const p = items[i++];
       rosters[teamIdx].push({...p, pickNo, round: round+1});
+      takenCount[teamIdx].set(p.team_name, (takenCount[teamIdx].get(p.team_name) || 0) + 1);
       if (rosters[teamIdx].length >= cap) capped[teamIdx] = true;
     }
     round++;
   }
-  const leftoverPlayers = items.slice(i);
-  return { rosters, leftoverPlayers };
+  return { rosters, leftoverPlayers: available };
 }
 
 function draftRow(p, labelHtml){
@@ -920,12 +950,16 @@ function draftRow(p, labelHtml){
 }
 
 function renderDraftBoard(pool){
-  const { rosters, leftoverPlayers } = simulateSnakeDraft(pool, ROSTER_CAP);
+  const perOriginalCap = fairnessCapToggle.checked ? parseInt(fairnessCapSelect.value, 10) : null;
+  const { rosters, leftoverPlayers } = simulateSnakeDraft(pool, ROSTER_CAP, perOriginalCap);
   draftBoard.innerHTML = '';
 
+  const fairnessNote = fairnessCapToggle.checked
+    ? ` Capped at ${fairnessCapSelect.value} players max from any one original team per new roster.`
+    : '';
   draftSubText.textContent = leftoverPlayers.length > 0
-    ? `Best-player-available, alternating every round. Each new roster is capped at ${ROSTER_CAP} (11 starters / 14 bench / 4 taxi) to match everyone else \u2014 ${leftoverPlayers.length} player${leftoverPlayers.length===1?'':'s'} nobody drafted stay put and go back to their original team's bench.`
-    : `Best-player-available, alternating every round, drafting straight out of the pool above until each new roster matches everyone else's shape (11 starters / 14 bench / 4 taxi \u2014 ${ROSTER_CAP} total).`;
+    ? `Best-player-available, alternating every round. Each new roster is capped at ${ROSTER_CAP} (11 starters / 14 bench / 4 taxi) to match everyone else \u2014 ${leftoverPlayers.length} player${leftoverPlayers.length===1?'':'s'} nobody drafted stay put and go back to their original team's bench.${fairnessNote}`
+    : `Best-player-available, alternating every round, drafting straight out of the pool above until each new roster matches everyone else's shape (11 starters / 14 bench / 4 taxi \u2014 ${ROSTER_CAP} total).${fairnessNote}`;
 
   rosters.forEach((roster, idx) => {
     const card = document.createElement('div');
@@ -1288,6 +1322,11 @@ capToggle.addEventListener('change', () => {
   applySliderLock();
   render();
 });
+fairnessCapToggle.addEventListener('change', () => {
+  fairnessCapSelect.disabled = !fairnessCapToggle.checked;
+  render();
+});
+fairnessCapSelect.addEventListener('change', render);
 teamSelect.addEventListener('change', () => {
   activeTeam = teamSelect.value;
   render();

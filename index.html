@@ -145,6 +145,18 @@
     color: var(--text-faint);
     padding: 0 2px;
   }
+  .lock-note{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--gold-dim);
+    margin-top: 8px;
+    letter-spacing: 0.02em;
+  }
+  input[type=range]:disabled{
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+  input[type=range]:disabled::-webkit-slider-thumb{ cursor: not-allowed; }
 
   /* ============ BOARD ============ */
   main{ max-width: 1500px; margin: 0 auto; padding: 32px 20px 80px; }
@@ -577,6 +589,7 @@
       <div class="ticks">
         <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25</span>
       </div>
+      <div class="lock-note" id="lockNote" style="display:none;">&#128274; Locked at 10 by the starting-lineup cap &mdash; uncheck the box below to unlock</div>
     </div>
   </div>
   <label class="timeline-toggle">
@@ -646,7 +659,7 @@
     <div class="pool-head">
       <div>
         <div class="pool-title">Post-Expansion Power Rankings</div>
-        <div class="pool-sub">All 12 teams at this protect level &mdash; projected record, playoff odds, and a rough 2028 outlook based on current value plus roster age skew. Illustrative, not a real prediction model.</div>
+        <div class="pool-sub">All 12 teams at this protect level &mdash; projected record, playoff odds, and a rough 2028 outlook blending current roster value with draft capital on hand (expansion teams assumed at 15,000). Illustrative, not a real prediction model.</div>
       </div>
     </div>
     <div class="pool-table-wrap">
@@ -683,8 +696,25 @@ const TIER_CLASS = {
   "Frisky": "tier-Frisky",
   "Trust the Process": "tier-TrusttheProcess",
 };
+// Draft Capital Value from the 2026-07-29 Dynasty Daddy power rankings export.
+// Used for the "2028 Outlook" projection. Expansion teams get a flat 15000
+// since they don't have real draft capital data yet.
+const DRAFT_CAPITAL = {
+  "Milwaukee Bucktees": 10965,
+  "Amon-Ra Tarded": 12080,
+  "KerMitS repeat": 17399,
+  "burrrr": 23519,
+  "Madison Herbert": 6848,
+  "TB12": 13016,
+  "Wide Receders": 8243,
+  "Cucky irving": 14821,
+  "Darty Party": 18850,
+  "uno": 35899,
+};
+const EXPANSION_DRAFT_CAPITAL = 15000;
 
 const slider = document.getElementById('slider');
+const lockNote = document.getElementById('lockNote');
 const readout = document.getElementById('readout');
 const board = document.getElementById('board');
 const poolBody = document.getElementById('poolBody');
@@ -910,14 +940,6 @@ function renderDraftBoard(pool){
 
 // --- Power rankings ------------------------------------------------------
 
-function weightedAvgAge(roster){
-  const withAge = roster.filter(p => p.age != null);
-  if (withAge.length === 0) return null;
-  const totalVal = withAge.reduce((s,p) => s + Math.max(p.value,0), 0);
-  if (totalVal <= 0) return withAge.reduce((s,p)=>s+p.age,0) / withAge.length;
-  return withAge.reduce((s,p) => s + p.age * Math.max(p.value,0), 0) / totalVal;
-}
-
 function renderPowerRankings(existingTeams, newRosters){
   // existingTeams: [{name, owner, tier, playoffOdds, roster: [...protected players]}]
   // newRosters: [ [players...], [players...] ] for the 2 expansion teams
@@ -927,6 +949,7 @@ function renderPowerRankings(existingTeams, newRosters){
     tier: t.tier,
     isNew: false,
     roster: t.roster,
+    draftCapital: DRAFT_CAPITAL[t.name] ?? EXPANSION_DRAFT_CAPITAL,
   }));
   newRosters.forEach((roster, idx) => {
     entries.push({
@@ -935,12 +958,12 @@ function renderPowerRankings(existingTeams, newRosters){
       tier: 'Expansion',
       isNew: true,
       roster,
+      draftCapital: EXPANSION_DRAFT_CAPITAL,
     });
   });
 
   entries.forEach(e => {
     e.totalValue = e.roster.reduce((s,p) => s + Math.max(p.value,0), 0);
-    e.avgAge = weightedAvgAge(e.roster);
   });
 
   const values = entries.map(e => e.totalValue);
@@ -948,19 +971,26 @@ function renderPowerRankings(existingTeams, newRosters){
   const variance = values.reduce((a,b)=>a+(b-mean)*(b-mean),0) / values.length;
   const std = Math.sqrt(variance) || 1;
 
+  const dcValues = entries.map(e => e.draftCapital);
+  const dcMean = dcValues.reduce((a,b)=>a+b,0) / dcValues.length;
+  const dcVariance = dcValues.reduce((a,b)=>a+(b-dcMean)*(b-dcMean),0) / dcValues.length;
+  const dcStd = Math.sqrt(dcVariance) || 1;
+
   entries.forEach(e => {
     e.z = (e.totalValue - mean) / std;
     e.playoffOdds = Math.round(100 / (1 + Math.exp(-1.1 * e.z)));
     e.playoffOdds = Math.max(3, Math.min(97, e.playoffOdds));
     const wins = Math.round(Math.max(1, Math.min(13, 7 + e.z * 3)));
     e.record = `${wins}-${14-wins}`;
-    // 2028 outlook: current standing plus a pull toward/away from youth
-    const ageForOutlook = e.avgAge == null ? 26 : e.avgAge;
-    e.outlookScore = e.z - (ageForOutlook - 25) * 0.18;
+    // 2028 outlook: current roster strength blended with draft capital on
+    // hand (future picks), per the Dynasty Daddy "Draft Capital Value" export.
+    e.dcZ = (e.draftCapital - dcMean) / dcStd;
+    e.outlookScore = e.z * 0.5 + e.dcZ * 0.5;
   });
 
   entries.sort((a,b) => b.totalValue - a.totalValue);
   entries.forEach((e,i) => e.currentRank = i+1);
+
 
   const outlookSorted = entries.slice().sort((a,b) => b.outlookScore - a.outlookScore);
   outlookSorted.forEach((e,i) => e.outlookRank = i+1);
@@ -1096,11 +1126,29 @@ function render(){
   });
 }
 
+let sliderValueBeforeLock = null;
+
+function applySliderLock(){
+  if (startersShapeToggle.checked){
+    sliderValueBeforeLock = slider.value;
+    slider.value = 10;
+    slider.disabled = true;
+    slider.title = 'Uncheck the starting-lineup cap box to unlock the slider';
+    lockNote.style.display = 'block';
+  } else {
+    slider.disabled = false;
+    slider.title = '';
+    lockNote.style.display = 'none';
+    if (sliderValueBeforeLock != null) slider.value = sliderValueBeforeLock;
+  }
+}
+
 slider.addEventListener('input', render);
 timelineToggle.addEventListener('change', render);
 maxQbSelect.addEventListener('change', render);
 startersShapeToggle.addEventListener('change', () => {
   maxQbSelect.disabled = startersShapeToggle.checked;
+  applySliderLock();
   render();
 });
 teamSelect.addEventListener('change', () => {

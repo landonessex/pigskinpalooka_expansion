@@ -273,7 +273,7 @@
 
   .cap-row{
     max-width: 760px;
-    margin: 10px auto 0;
+    margin: 12px auto 0;
     display:flex;
     align-items:center;
     gap: 20px;
@@ -281,6 +281,8 @@
     font-family:'JetBrains Mono',monospace;
     font-size: 11px;
     color: var(--text-dim);
+    padding-top: 12px;
+    border-top: 1px solid var(--line-soft);
   }
   .cap-label{ display:flex; align-items:center; gap:8px; }
   .cap-label select{
@@ -910,28 +912,21 @@ function selectProtects(sortedPlayers, n, caps){
 }
 
 // Applies the optional "QB hoarding tax": every QB kept beyond 2 costs the
-// team one fewer total protect slot. Since trimming the tail could itself
-// drop a QB and change the tax owed, iterate to a stable point (converges
-// almost always in 1-2 passes since cuts only ever remove the lowest-value
-// player still in the list).
+// team one fewer total protect slot. Evaluated once against the team's
+// originally-desired N (not re-checked after trimming) — otherwise a QB
+// sitting right at the cutoff can flip the tax on and off forever, since
+// removing the marginal slot may itself remove the QB that triggered it.
 function selectProtectsWithQbTax(sortedPlayers, n, caps, taxEnabled){
   if (!taxEnabled){
     const result = selectProtects(sortedPlayers, n, caps);
-    return { ...result, effectiveN: n, qbTax: 0 };
+    return { ...result, effectiveN: n, qbTax: 0, qbCountAtN: null };
   }
-  let currentN = n;
-  let result = selectProtects(sortedPlayers, currentN, caps);
-  for (let iter = 0; iter < 8; iter++){
-    const qbCount = result.protected_.filter(p => p.pos === 'QB').length;
-    const tax = Math.max(0, qbCount - 2);
-    const newN = Math.max(0, n - tax);
-    if (newN === currentN) break;
-    currentN = newN;
-    result = selectProtects(sortedPlayers, currentN, caps);
-  }
-  const finalQbCount = result.protected_.filter(p => p.pos === 'QB').length;
-  const qbTax = Math.max(0, finalQbCount - 2);
-  return { ...result, effectiveN: currentN, qbTax };
+  const initial = selectProtects(sortedPlayers, n, caps);
+  const qbCountAtN = initial.protected_.filter(p => p.pos === 'QB').length;
+  const qbTax = Math.max(0, qbCountAtN - 2);
+  const effectiveN = Math.max(0, n - qbTax);
+  const result = qbTax > 0 ? selectProtects(sortedPlayers, effectiveN, caps) : initial;
+  return { ...result, effectiveN, qbTax, qbCountAtN };
 }
 
 function buildLineup(roster){
@@ -1257,7 +1252,7 @@ function render(){
 
     const timelineOrder = team.players.slice().sort((a,b) => timelineWeight(b,team) - timelineWeight(a,team));
 
-    const { protected_, exposed, effectiveN, qbTax } = selectProtectsWithQbTax(timelineOrder, n, caps, qbTaxToggle.checked);
+    const { protected_, exposed, effectiveN, qbTax, qbCountAtN } = selectProtectsWithQbTax(timelineOrder, n, caps, qbTaxToggle.checked);
     exposed.forEach(p => pool.push({...p, team_name: team.name}));
 
     lastExistingRosters.push({
@@ -1270,7 +1265,7 @@ function render(){
 
     const tierClass = TIER_CLASS[team.tier] || 'tier-Frisky';
     const taxNote = qbTax > 0
-      ? `<div class="qb-tax-note">&#9888; ${qbTax} QB${qbTax===1?'':'s'} beyond 2 kept \u2014 protecting ${effectiveN} instead of ${n}</div>`
+      ? `<div class="qb-tax-note">&#9888; Would keep ${qbCountAtN} QBs at ${n} protects \u2014 taxed down to ${effectiveN}</div>`
       : '';
     const head = document.createElement('div');
     head.className = 'team-head';

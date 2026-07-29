@@ -253,6 +253,44 @@
   }
   .timeline-toggle input{ accent-color: var(--gold); width:14px; height:14px; }
 
+  .cap-row{
+    max-width: 760px;
+    margin: 10px auto 0;
+    display:flex;
+    align-items:center;
+    gap: 20px;
+    flex-wrap: wrap;
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .cap-label{ display:flex; align-items:center; gap:8px; }
+  .cap-label select{
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+    color: var(--gold);
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+    padding: 5px 8px;
+    border-radius: 3px;
+    cursor:pointer;
+  }
+  .cap-checkbox{ display:flex; align-items:center; gap:8px; cursor:pointer; }
+  .cap-checkbox input{ accent-color: var(--gold); width:14px; height:14px; }
+
+  .rankings-section{ border-top: 1px solid var(--line); padding-top: 40px; margin-top: 40px; padding-bottom: 20px; }
+  #rankingsBody td{ font-family:'JetBrains Mono',monospace; font-size: 13px; }
+  #rankingsBody td.teamname-cell{ font-family:'Oswald',sans-serif; font-size: 14px; font-weight: 500; }
+  .outlook-up{ color:#6fbf8a; }
+  .outlook-down{ color:#8a6262; }
+  .new-team-row{ background: rgba(212,169,78,0.05); }
+  .new-team-tag{
+    font-family:'JetBrains Mono',monospace;
+    font-size: 9px;
+    color: var(--gold-dim);
+    letter-spacing:0.05em;
+  }
+
   /* ============ LINEUP VIEW ============ */
   .lineup-toggle-btn{
     font-family:'JetBrains Mono',monospace;
@@ -530,6 +568,7 @@
   <div class="jumpnav">
     <a href="#pool-section">&darr; Players Available</a>
     <a href="#draft-section">&darr; New Team Rosters</a>
+    <a href="#rankings-section">&darr; Power Rankings</a>
   </div>
   <div class="control-inner">
     <div class="protect-readout" id="readout">0<small>protected</small></div>
@@ -544,6 +583,20 @@
     <input type="checkbox" id="timelineToggle" checked>
     Factor in contention window &mdash; contenders lean toward proven vets, rebuilders lean toward youth
   </label>
+  <div class="cap-row">
+    <label class="cap-label">Max QB protects:
+      <select id="maxQbSelect">
+        <option value="Infinity">Any</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+        <option value="4">4</option>
+      </select>
+    </label>
+    <label class="cap-checkbox">
+      <input type="checkbox" id="startersShapeToggle">
+      Cap to starting-lineup shape (2 QB / 3 RB / 3 WR / 1 TE / 1 FLEX)
+    </label>
+  </div>
 </div>
 
 <main>
@@ -583,10 +636,35 @@
     <div class="pool-head">
       <div>
         <div class="pool-title">Snake Draft &mdash; 2 New Teams</div>
-        <div class="pool-sub">Best-player-available, alternating every round, drafting straight out of the pool above until it's gone.</div>
+        <div class="pool-sub" id="draftSubText">Best-player-available, alternating every round, drafting straight out of the pool above until each new roster matches everyone else's shape (11 starters / 14 bench / 4 taxi &mdash; 29 total).</div>
       </div>
     </div>
     <div class="draft-board" id="draftBoard"></div>
+  </div>
+
+  <div class="rankings-section" id="rankings-section">
+    <div class="pool-head">
+      <div>
+        <div class="pool-title">Post-Expansion Power Rankings</div>
+        <div class="pool-sub">All 12 teams at this protect level &mdash; projected record, playoff odds, and a rough 2028 outlook based on current value plus roster age skew. Illustrative, not a real prediction model.</div>
+      </div>
+    </div>
+    <div class="pool-table-wrap">
+      <div class="pool-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Team</th><th>Timeline</th>
+              <th style="text-align:right">Roster Value</th>
+              <th style="text-align:center">Proj. Record</th>
+              <th style="text-align:right">Playoff Odds</th>
+              <th style="text-align:right">2028 Outlook</th>
+            </tr>
+          </thead>
+          <tbody id="rankingsBody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </main>
 
@@ -597,6 +675,7 @@
 <script src="data.js"></script>
 <script>
 const FLEX_POS = new Set(["RB","WR","TE"]);
+const ROSTER_CAP = 29; // 11 starters + 14 bench + 4 taxi, matches everyone else's shape
 const TIER_CLASS = {
   "Contender": "tier-Contender",
   "Last Dance": "tier-LastDance",
@@ -614,7 +693,11 @@ const poolSubText = document.getElementById('poolSubText');
 const filterBtns = document.querySelectorAll('.filter-btn');
 const teamSelect = document.getElementById('teamSelect');
 const draftBoard = document.getElementById('draftBoard');
+const draftSubText = document.getElementById('draftSubText');
 const timelineToggle = document.getElementById('timelineToggle');
+const maxQbSelect = document.getElementById('maxQbSelect');
+const startersShapeToggle = document.getElementById('startersShapeToggle');
+const rankingsBody = document.getElementById('rankingsBody');
 
 let activeFilter = 'ALL';
 let activeTeam = 'ALL';
@@ -647,6 +730,40 @@ function timelineWeight(p, team){
   return p.value * mult;
 }
 
+// Reads the two position-cap controls into a caps object used by selectProtects.
+function getCaps(){
+  if (startersShapeToggle.checked){
+    return { QB: 2, RB: 3, WR: 3, TE: 1, flexBonus: 1 };
+  }
+  const qbCapRaw = maxQbSelect.value;
+  const qbCap = qbCapRaw === 'Infinity' ? Infinity : parseInt(qbCapRaw, 10);
+  return { QB: qbCap, RB: Infinity, WR: Infinity, TE: Infinity, flexBonus: Infinity };
+}
+
+// Greedily protects up to n players from a pre-sorted list, respecting position caps.
+// Anyone blocked by a cap gets skipped (stays exposed) even if their value would
+// otherwise earn a protect slot.
+function selectProtects(sortedPlayers, n, caps){
+  const posCount = { QB:0, RB:0, WR:0, TE:0 };
+  let flexUsed = 0;
+  const protected_ = [];
+  for (const p of sortedPlayers){
+    if (protected_.length >= n) break;
+    const cap = caps[p.pos] ?? Infinity;
+    if (posCount[p.pos] < cap){
+      posCount[p.pos]++;
+      protected_.push(p);
+    } else if (FLEX_POS.has(p.pos) && flexUsed < (caps.flexBonus ?? Infinity)){
+      flexUsed++;
+      protected_.push(p);
+    }
+    // else: blocked by cap, stays in the exposed pool
+  }
+  const protectedNames = new Set(protected_.map(p => p.name));
+  const exposed = sortedPlayers.filter(p => !protectedNames.has(p.name));
+  return { protected_, exposed };
+}
+
 function buildLineup(roster){
   // roster assumed sorted desc by value already
   const need = {QB:2, RB:3, WR:3, TE:1};
@@ -676,24 +793,30 @@ function buildLineup(roster){
   return {starters, bench};
 }
 
-function simulateSnakeDraft(pool){
-  // pool: array sorted desc by value already
+// Snake draft that stops each new team at ROSTER_CAP so their bench matches
+// everyone else's shape instead of absorbing the entire leftover pool.
+function simulateSnakeDraft(pool, cap){
   const rosters = [[], []];
+  const capped = [false, false];
   let round = 0;
   let i = 0;
   const items = pool.slice();
   let pickNo = 0;
-  while (i < items.length){
+  while (i < items.length && !(capped[0] && capped[1])){
     const order = (round % 2 === 0) ? [0,1] : [1,0];
     for (const teamIdx of order){
+      if (capped[teamIdx]) continue;
       if (i >= items.length) break;
       pickNo++;
       const p = items[i++];
       rosters[teamIdx].push({...p, pickNo, round: round+1});
+      if (rosters[teamIdx].length >= cap) capped[teamIdx] = true;
     }
     round++;
   }
-  return rosters;
+  const drafted = rosters[0].length + rosters[1].length;
+  const leftover = items.length - drafted;
+  return { rosters, leftover };
 }
 
 function draftRow(p, labelHtml){
@@ -709,8 +832,13 @@ function draftRow(p, labelHtml){
 }
 
 function renderDraftBoard(pool){
-  const rosters = simulateSnakeDraft(pool);
+  const { rosters, leftover } = simulateSnakeDraft(pool, ROSTER_CAP);
   draftBoard.innerHTML = '';
+
+  draftSubText.textContent = leftover > 0
+    ? `Best-player-available, alternating every round. Each new roster is capped at ${ROSTER_CAP} (11 starters / 14 bench / 4 taxi) to match everyone else \u2014 ${leftover} player${leftover===1?'':'s'} left over would hit free agency.`
+    : `Best-player-available, alternating every round, drafting straight out of the pool above until each new roster matches everyone else's shape (11 starters / 14 bench / 4 taxi \u2014 ${ROSTER_CAP} total).`;
+
   rosters.forEach((roster, idx) => {
     const card = document.createElement('div');
     card.className = 'draft-card';
@@ -719,7 +847,7 @@ function renderDraftBoard(pool){
     head.className = 'draft-card-head';
     head.innerHTML = `
       <input class="draft-name-input" value="${expansionNames[idx]}" data-idx="${idx}">
-      <span class="draft-card-count mono">${roster.length} players</span>
+      <span class="draft-card-count mono">${roster.length}/${ROSTER_CAP}</span>
       <button class="lineup-toggle-btn" data-idx="${idx}">${draftViewMode[idx] === 'order' ? 'Show Starting Lineup' : 'Show Draft Order'}</button>
     `;
     card.appendChild(head);
@@ -766,6 +894,7 @@ function renderDraftBoard(pool){
   draftBoard.querySelectorAll('.draft-name-input').forEach(inp => {
     inp.addEventListener('input', (e) => {
       expansionNames[parseInt(e.target.dataset.idx,10)] = e.target.value;
+      renderPowerRankings(lastExistingRosters, rosters);
     });
   });
   draftBoard.querySelectorAll('.lineup-toggle-btn').forEach(btn => {
@@ -775,7 +904,95 @@ function renderDraftBoard(pool){
       render();
     });
   });
+
+  return rosters;
 }
+
+// --- Power rankings ------------------------------------------------------
+
+function weightedAvgAge(roster){
+  const withAge = roster.filter(p => p.age != null);
+  if (withAge.length === 0) return null;
+  const totalVal = withAge.reduce((s,p) => s + Math.max(p.value,0), 0);
+  if (totalVal <= 0) return withAge.reduce((s,p)=>s+p.age,0) / withAge.length;
+  return withAge.reduce((s,p) => s + p.age * Math.max(p.value,0), 0) / totalVal;
+}
+
+function renderPowerRankings(existingTeams, newRosters){
+  // existingTeams: [{name, owner, tier, playoffOdds, roster: [...protected players]}]
+  // newRosters: [ [players...], [players...] ] for the 2 expansion teams
+  const entries = existingTeams.map(t => ({
+    name: t.name,
+    owner: t.owner,
+    tier: t.tier,
+    isNew: false,
+    roster: t.roster,
+  }));
+  newRosters.forEach((roster, idx) => {
+    entries.push({
+      name: expansionNames[idx] || `Expansion Team ${idx===0?'A':'B'}`,
+      owner: '\u2014',
+      tier: 'Expansion',
+      isNew: true,
+      roster,
+    });
+  });
+
+  entries.forEach(e => {
+    e.totalValue = e.roster.reduce((s,p) => s + Math.max(p.value,0), 0);
+    e.avgAge = weightedAvgAge(e.roster);
+  });
+
+  const values = entries.map(e => e.totalValue);
+  const mean = values.reduce((a,b)=>a+b,0) / values.length;
+  const variance = values.reduce((a,b)=>a+(b-mean)*(b-mean),0) / values.length;
+  const std = Math.sqrt(variance) || 1;
+
+  entries.forEach(e => {
+    e.z = (e.totalValue - mean) / std;
+    e.playoffOdds = Math.round(100 / (1 + Math.exp(-1.1 * e.z)));
+    e.playoffOdds = Math.max(3, Math.min(97, e.playoffOdds));
+    const wins = Math.round(Math.max(1, Math.min(13, 7 + e.z * 3)));
+    e.record = `${wins}-${14-wins}`;
+    // 2028 outlook: current standing plus a pull toward/away from youth
+    const ageForOutlook = e.avgAge == null ? 26 : e.avgAge;
+    e.outlookScore = e.z - (ageForOutlook - 25) * 0.18;
+  });
+
+  entries.sort((a,b) => b.totalValue - a.totalValue);
+  entries.forEach((e,i) => e.currentRank = i+1);
+
+  const outlookSorted = entries.slice().sort((a,b) => b.outlookScore - a.outlookScore);
+  outlookSorted.forEach((e,i) => e.outlookRank = i+1);
+
+  rankingsBody.innerHTML = '';
+  entries.forEach(e => {
+    const tr = document.createElement('tr');
+    if (e.isNew) tr.className = 'new-team-row';
+    const tierClass = TIER_CLASS[e.tier] || '';
+    const tierBadge = e.isNew
+      ? `<span class="new-team-tag">EXPANSION</span>`
+      : `<span class="tier-badge ${tierClass}" style="margin-top:0;">${e.tier}</span>`;
+    const rankDelta = e.currentRank - e.outlookRank; // positive = expected to rise
+    const outlookHtml = rankDelta > 0
+      ? `#${e.outlookRank} <span class="outlook-up">&#9650;${rankDelta}</span>`
+      : rankDelta < 0
+        ? `#${e.outlookRank} <span class="outlook-down">&#9660;${Math.abs(rankDelta)}</span>`
+        : `#${e.outlookRank} &middot;`;
+    tr.innerHTML = `
+      <td class="rankcol mono">${e.currentRank}</td>
+      <td class="teamname-cell">${e.name}${e.owner!=='\u2014' ? ` <span style="color:var(--text-faint);font-size:11px;">(${e.owner})</span>` : ''}</td>
+      <td>${tierBadge}</td>
+      <td class="valcol">${fmtVal(e.totalValue)}</td>
+      <td style="text-align:center" class="mono">${e.record}</td>
+      <td class="valcol">${e.playoffOdds}%</td>
+      <td class="valcol">${outlookHtml}</td>
+    `;
+    rankingsBody.appendChild(tr);
+  });
+}
+
+let lastExistingRosters = [];
 
 function render(){
   const n = parseInt(slider.value, 10);
@@ -785,6 +1002,8 @@ function render(){
 
   board.innerHTML = '';
   let pool = [];
+  const caps = getCaps();
+  lastExistingRosters = [];
 
   TEAMS.forEach(team => {
     // pure value order (for comparing whether the timeline nudge moved anyone)
@@ -793,9 +1012,13 @@ function render(){
 
     const timelineOrder = team.players.slice().sort((a,b) => timelineWeight(b,team) - timelineWeight(a,team));
 
-    const protected_ = timelineOrder.slice(0, n);
-    const exposed = timelineOrder.slice(n);
+    const { protected_, exposed } = selectProtects(timelineOrder, n, caps);
     exposed.forEach(p => pool.push({...p, team_name: team.name}));
+
+    lastExistingRosters.push({
+      name: team.name, owner: team.owner, tier: team.tier,
+      playoffOdds: team.playoffOdds, roster: protected_,
+    });
 
     const card = document.createElement('div');
     card.className = 'team-card';
@@ -845,7 +1068,8 @@ function render(){
 
   pool.sort((a,b) => b.value - a.value);
 
-  renderDraftBoard(pool);
+  const newRosters = renderDraftBoard(pool);
+  renderPowerRankings(lastExistingRosters, newRosters);
 
   let filtered = pool;
   if (activeTeam !== 'ALL') filtered = filtered.filter(p => p.team_name === activeTeam);
@@ -874,6 +1098,11 @@ function render(){
 
 slider.addEventListener('input', render);
 timelineToggle.addEventListener('change', render);
+maxQbSelect.addEventListener('change', render);
+startersShapeToggle.addEventListener('change', () => {
+  maxQbSelect.disabled = startersShapeToggle.checked;
+  render();
+});
 teamSelect.addEventListener('change', () => {
   activeTeam = teamSelect.value;
   render();
@@ -889,6 +1118,7 @@ filterBtns.forEach(btn => {
 
 render();
 </script>
+
 
 </body>
 </html>

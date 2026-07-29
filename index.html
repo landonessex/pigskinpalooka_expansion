@@ -289,10 +289,15 @@
   }
   .cap-checkbox{ display:flex; align-items:center; gap:8px; cursor:pointer; }
   .cap-checkbox input{ accent-color: var(--gold); width:14px; height:14px; }
+  .cap-label select:disabled{ opacity:0.4; cursor:not-allowed; }
 
   .rankings-section{ border-top: 1px solid var(--line); padding-top: 40px; margin-top: 40px; padding-bottom: 20px; }
   #rankingsBody td{ font-family:'JetBrains Mono',monospace; font-size: 13px; }
   #rankingsBody td.teamname-cell{ font-family:'Oswald',sans-serif; font-size: 14px; font-weight: 500; }
+  .sortable-th{ cursor:pointer; user-select:none; transition: color .12s ease; }
+  .sortable-th:hover{ color: var(--gold); }
+  .sortable-th.active-sort{ color: var(--gold); }
+  .sort-arrow{ font-size:9px; margin-left:4px; }
   .outlook-up{ color:#6fbf8a; }
   .outlook-down{ color:#8a6262; }
   .new-team-row{ background: rgba(212,169,78,0.05); }
@@ -586,7 +591,7 @@
     <div class="protect-readout" id="readout">0<small>protected</small></div>
     <div class="slider-wrap">
       <input type="range" id="slider" min="0" max="25" value="0" step="1">
-      <div class="ticks">
+      <div class="ticks" id="ticksRow">
         <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25</span>
       </div>
       <div class="lock-note" id="lockNote" style="display:none;">&#128274; Locked at 10 by the starting-lineup cap &mdash; uncheck the box below to unlock</div>
@@ -597,18 +602,15 @@
     Factor in contention window &mdash; contenders lean toward proven vets, rebuilders lean toward youth
   </label>
   <div class="cap-row">
-    <label class="cap-label">Max QB protects:
-      <select id="maxQbSelect">
-        <option value="Infinity">Any</option>
-        <option value="2">2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-      </select>
-    </label>
     <label class="cap-checkbox">
-      <input type="checkbox" id="startersShapeToggle">
-      Cap to starting-lineup shape (2 QB / 3 RB / 3 WR / 1 TE / 1 FLEX)
+      <input type="checkbox" id="capToggle">
+      Cap protects by position:
     </label>
+    <label class="cap-label">QB<select id="capQB" disabled></select></label>
+    <label class="cap-label">RB<select id="capRB" disabled></select></label>
+    <label class="cap-label">WR<select id="capWR" disabled></select></label>
+    <label class="cap-label">TE<select id="capTE" disabled></select></label>
+    <label class="cap-label">FLEX<select id="capFLEX" disabled></select></label>
   </div>
 </div>
 
@@ -668,10 +670,12 @@
           <thead>
             <tr>
               <th>#</th><th>Team</th><th>Timeline</th>
-              <th style="text-align:right">Roster Value</th>
+              <th class="sortable-th" data-sort="starterValue" style="text-align:right">Starter Value</th>
+              <th class="sortable-th" data-sort="benchValue" style="text-align:right">Bench Value</th>
+              <th class="sortable-th" data-sort="totalValue" style="text-align:right">Total Value</th>
               <th style="text-align:center">Proj. Record</th>
-              <th style="text-align:right">Playoff Odds</th>
-              <th style="text-align:right">2028 Outlook</th>
+              <th class="sortable-th" data-sort="playoffOdds" style="text-align:right">Playoff Odds</th>
+              <th class="sortable-th" data-sort="outlookScore" style="text-align:right">2028 Outlook</th>
             </tr>
           </thead>
           <tbody id="rankingsBody"></tbody>
@@ -725,14 +729,41 @@ const teamSelect = document.getElementById('teamSelect');
 const draftBoard = document.getElementById('draftBoard');
 const draftSubText = document.getElementById('draftSubText');
 const timelineToggle = document.getElementById('timelineToggle');
-const maxQbSelect = document.getElementById('maxQbSelect');
-const startersShapeToggle = document.getElementById('startersShapeToggle');
+const capToggle = document.getElementById('capToggle');
+const capQB = document.getElementById('capQB');
+const capRB = document.getElementById('capRB');
+const capWR = document.getElementById('capWR');
+const capTE = document.getElementById('capTE');
+const capFLEX = document.getElementById('capFLEX');
+const capSelects = [capQB, capRB, capWR, capTE, capFLEX];
 const rankingsBody = document.getElementById('rankingsBody');
 
 let activeFilter = 'ALL';
 let activeTeam = 'ALL';
 let expansionNames = ['Expansion Team A', 'Expansion Team B'];
 let draftViewMode = ['order', 'order']; // per expansion team: 'order' or 'lineup'
+let sortKey = 'totalValue'; // active power-rankings sort column
+
+// Populate the 5 position-cap dropdowns with 0..max plus "Any", each defaulted
+// to a sensible starting-lineup-shaped number.
+function populateCapSelect(sel, max, defaultVal){
+  const opt0 = document.createElement('option');
+  opt0.value = 'Infinity';
+  opt0.textContent = 'Any';
+  sel.appendChild(opt0);
+  for (let i = 0; i <= max; i++){
+    const opt = document.createElement('option');
+    opt.value = String(i);
+    opt.textContent = String(i);
+    sel.appendChild(opt);
+  }
+  sel.value = String(defaultVal);
+}
+populateCapSelect(capQB, 6, 2);
+populateCapSelect(capRB, 8, 3);
+populateCapSelect(capWR, 8, 3);
+populateCapSelect(capTE, 4, 1);
+populateCapSelect(capFLEX, 10, 1);
 
 // Populate the team dropdown once from TEAMS (sorted alphabetically for easy scanning)
 TEAMS.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(team => {
@@ -760,14 +791,22 @@ function timelineWeight(p, team){
   return p.value * mult;
 }
 
-// Reads the two position-cap controls into a caps object used by selectProtects.
+function parseCapValue(v){
+  return v === 'Infinity' ? Infinity : parseInt(v, 10);
+}
+
+// Reads the 5 position-cap dropdowns into a caps object used by selectProtects.
 function getCaps(){
-  if (startersShapeToggle.checked){
-    return { QB: 2, RB: 3, WR: 3, TE: 1, flexBonus: 1 };
+  if (!capToggle.checked){
+    return { QB: Infinity, RB: Infinity, WR: Infinity, TE: Infinity, flexBonus: Infinity };
   }
-  const qbCapRaw = maxQbSelect.value;
-  const qbCap = qbCapRaw === 'Infinity' ? Infinity : parseInt(qbCapRaw, 10);
-  return { QB: qbCap, RB: Infinity, WR: Infinity, TE: Infinity, flexBonus: Infinity };
+  return {
+    QB: parseCapValue(capQB.value),
+    RB: parseCapValue(capRB.value),
+    WR: parseCapValue(capWR.value),
+    TE: parseCapValue(capTE.value),
+    flexBonus: parseCapValue(capFLEX.value),
+  };
 }
 
 // Greedily protects up to n players from a pre-sorted list, respecting position caps.
@@ -964,6 +1003,12 @@ function renderPowerRankings(existingTeams, newRosters){
 
   entries.forEach(e => {
     e.totalValue = e.roster.reduce((s,p) => s + Math.max(p.value,0), 0);
+    // Lineup split uses true value order (best players start), independent
+    // of any timeline-nudge ordering used for the protect decision itself.
+    const byValue = e.roster.slice().sort((a,b) => b.value - a.value);
+    const { starters } = buildLineup(byValue);
+    e.starterValue = starters.reduce((s,p) => s + Math.max(p.value,0), 0);
+    e.benchValue = e.totalValue - e.starterValue;
   });
 
   const values = entries.map(e => e.totalValue);
@@ -988,31 +1033,44 @@ function renderPowerRankings(existingTeams, newRosters){
     e.outlookScore = e.z * 0.5 + e.dcZ * 0.5;
   });
 
-  entries.sort((a,b) => b.totalValue - a.totalValue);
-  entries.forEach((e,i) => e.currentRank = i+1);
-
+  // Stable baseline rank (by total value) used only for the outlook arrow delta.
+  const byTotalValue = entries.slice().sort((a,b) => b.totalValue - a.totalValue);
+  byTotalValue.forEach((e,i) => e.valueRank = i+1);
 
   const outlookSorted = entries.slice().sort((a,b) => b.outlookScore - a.outlookScore);
   outlookSorted.forEach((e,i) => e.outlookRank = i+1);
 
+  // Display order follows whichever column is currently active for sorting.
+  const displayOrder = entries.slice().sort((a,b) => (b[sortKey] ?? 0) - (a[sortKey] ?? 0));
+
+  document.querySelectorAll('.sortable-th').forEach(th => {
+    const isActive = th.dataset.sort === sortKey;
+    th.classList.toggle('active-sort', isActive);
+    const baseLabel = th.dataset.label || th.textContent.replace(/\s*\u25BC\s*$/,'').trim();
+    th.dataset.label = baseLabel;
+    th.innerHTML = isActive ? `${baseLabel}<span class="sort-arrow">&#9660;</span>` : baseLabel;
+  });
+
   rankingsBody.innerHTML = '';
-  entries.forEach(e => {
+  displayOrder.forEach((e, i) => {
     const tr = document.createElement('tr');
     if (e.isNew) tr.className = 'new-team-row';
     const tierClass = TIER_CLASS[e.tier] || '';
     const tierBadge = e.isNew
       ? `<span class="new-team-tag">EXPANSION</span>`
       : `<span class="tier-badge ${tierClass}" style="margin-top:0;">${e.tier}</span>`;
-    const rankDelta = e.currentRank - e.outlookRank; // positive = expected to rise
+    const rankDelta = e.valueRank - e.outlookRank; // positive = expected to rise
     const outlookHtml = rankDelta > 0
       ? `#${e.outlookRank} <span class="outlook-up">&#9650;${rankDelta}</span>`
       : rankDelta < 0
         ? `#${e.outlookRank} <span class="outlook-down">&#9660;${Math.abs(rankDelta)}</span>`
         : `#${e.outlookRank} &middot;`;
     tr.innerHTML = `
-      <td class="rankcol mono">${e.currentRank}</td>
+      <td class="rankcol mono">${i+1}</td>
       <td class="teamname-cell">${e.name}${e.owner!=='\u2014' ? ` <span style="color:var(--text-faint);font-size:11px;">(${e.owner})</span>` : ''}</td>
       <td>${tierBadge}</td>
+      <td class="valcol">${fmtVal(e.starterValue)}</td>
+      <td class="valcol">${fmtVal(e.benchValue)}</td>
       <td class="valcol">${fmtVal(e.totalValue)}</td>
       <td style="text-align:center" class="mono">${e.record}</td>
       <td class="valcol">${e.playoffOdds}%</td>
@@ -1023,6 +1081,7 @@ function renderPowerRankings(existingTeams, newRosters){
 }
 
 let lastExistingRosters = [];
+let lastNewRosters = [];
 
 function render(){
   const n = parseInt(slider.value, 10);
@@ -1099,6 +1158,7 @@ function render(){
   pool.sort((a,b) => b.value - a.value);
 
   const newRosters = renderDraftBoard(pool);
+  lastNewRosters = newRosters;
   renderPowerRankings(lastExistingRosters, newRosters);
 
   let filtered = pool;
@@ -1127,27 +1187,63 @@ function render(){
 }
 
 let sliderValueBeforeLock = null;
+let isLocked = false;
+const ticksRow = document.getElementById('ticksRow');
+
+function updateTicks(maxVal){
+  const steps = 5;
+  let html = '';
+  for (let i = 0; i <= steps; i++){
+    html += `<span>${Math.round(maxVal * i / steps)}</span>`;
+  }
+  ticksRow.innerHTML = html;
+}
+
+function capsAreAllFinite(caps){
+  return [caps.QB, caps.RB, caps.WR, caps.TE, caps.flexBonus].every(Number.isFinite);
+}
 
 function applySliderLock(){
-  if (startersShapeToggle.checked){
-    sliderValueBeforeLock = slider.value;
-    slider.value = 10;
+  const caps = getCaps();
+  const shouldLock = capToggle.checked && capsAreAllFinite(caps);
+
+  if (shouldLock){
+    const total = caps.QB + caps.RB + caps.WR + caps.TE + caps.flexBonus;
+    if (!isLocked){
+      sliderValueBeforeLock = slider.value;
+      isLocked = true;
+    }
+    const newMax = Math.max(25, total);
+    slider.max = newMax;
+    slider.value = total;
     slider.disabled = true;
-    slider.title = 'Uncheck the starting-lineup cap box to unlock the slider';
+    slider.title = `Locked at ${total} (sum of the position caps below) \u2014 uncheck the box to unlock`;
+    lockNote.textContent = `\u{1F512} Locked at ${total} (${caps.QB} QB / ${caps.RB} RB / ${caps.WR} WR / ${caps.TE} TE / ${caps.flexBonus} FLEX) \u2014 uncheck the box below to unlock`;
     lockNote.style.display = 'block';
+    updateTicks(newMax);
   } else {
+    if (isLocked){
+      slider.value = sliderValueBeforeLock ?? slider.value;
+      isLocked = false;
+    }
+    slider.max = 25;
     slider.disabled = false;
     slider.title = '';
     lockNote.style.display = 'none';
-    if (sliderValueBeforeLock != null) slider.value = sliderValueBeforeLock;
+    updateTicks(25);
   }
 }
 
 slider.addEventListener('input', render);
 timelineToggle.addEventListener('change', render);
-maxQbSelect.addEventListener('change', render);
-startersShapeToggle.addEventListener('change', () => {
-  maxQbSelect.disabled = startersShapeToggle.checked;
+capSelects.forEach(sel => {
+  sel.addEventListener('change', () => {
+    applySliderLock();
+    render();
+  });
+});
+capToggle.addEventListener('change', () => {
+  capSelects.forEach(sel => { sel.disabled = !capToggle.checked; });
   applySliderLock();
   render();
 });
@@ -1161,6 +1257,12 @@ filterBtns.forEach(btn => {
     btn.classList.add('active');
     activeFilter = btn.dataset.f;
     render();
+  });
+});
+document.querySelectorAll('.sortable-th').forEach(th => {
+  th.addEventListener('click', () => {
+    sortKey = th.dataset.sort;
+    renderPowerRankings(lastExistingRosters, lastNewRosters);
   });
 });
 

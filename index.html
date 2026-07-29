@@ -86,6 +86,11 @@
     border-bottom: 1px solid var(--line);
     padding: 18px 24px;
   }
+  .options-panel{
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--line);
+    padding: 14px 24px 18px;
+  }
   .control-inner{
     max-width: 760px;
     margin: 0 auto;
@@ -598,11 +603,6 @@
 </header>
 
 <div class="control-dock">
-  <div class="jumpnav">
-    <a href="#pool-section">&darr; Players Available</a>
-    <a href="#draft-section">&darr; New Team Rosters</a>
-    <a href="#rankings-section">&darr; Power Rankings</a>
-  </div>
   <div class="control-inner">
     <div class="protect-readout" id="readout">0<small>protected</small></div>
     <div class="slider-wrap">
@@ -612,6 +612,14 @@
       </div>
       <div class="lock-note" id="lockNote" style="display:none;">&#128274; Locked at 10 by the starting-lineup cap &mdash; uncheck the box below to unlock</div>
     </div>
+  </div>
+</div>
+
+<div class="options-panel">
+  <div class="jumpnav">
+    <a href="#pool-section">&darr; Players Available</a>
+    <a href="#draft-section">&darr; New Team Rosters</a>
+    <a href="#rankings-section">&darr; Power Rankings</a>
   </div>
   <label class="timeline-toggle">
     <input type="checkbox" id="timelineToggle" checked>

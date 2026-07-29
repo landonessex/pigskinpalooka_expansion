@@ -290,6 +290,7 @@
   .cap-checkbox{ display:flex; align-items:center; gap:8px; cursor:pointer; }
   .cap-checkbox input{ accent-color: var(--gold); width:14px; height:14px; }
   .cap-label select:disabled{ opacity:0.4; cursor:not-allowed; }
+  .cap-hint{ color: var(--text-faint); font-size: 10px; font-style: italic; }
 
   .rankings-section{ border-top: 1px solid var(--line); padding-top: 40px; margin-top: 40px; padding-bottom: 20px; }
   #rankingsBody td{ font-family:'JetBrains Mono',monospace; font-size: 13px; }
@@ -602,6 +603,10 @@
     Factor in contention window &mdash; contenders lean toward proven vets, rebuilders lean toward youth
   </label>
   <div class="cap-row">
+    <label class="cap-label">Max QB protects<select id="maxQbSelect"></select></label>
+    <span class="cap-hint">(used when the position cap below is off)</span>
+  </div>
+  <div class="cap-row">
     <label class="cap-checkbox">
       <input type="checkbox" id="capToggle">
       Cap protects by position:
@@ -729,6 +734,7 @@ const teamSelect = document.getElementById('teamSelect');
 const draftBoard = document.getElementById('draftBoard');
 const draftSubText = document.getElementById('draftSubText');
 const timelineToggle = document.getElementById('timelineToggle');
+const maxQbSelect = document.getElementById('maxQbSelect');
 const capToggle = document.getElementById('capToggle');
 const capQB = document.getElementById('capQB');
 const capRB = document.getElementById('capRB');
@@ -760,10 +766,20 @@ function populateCapSelect(sel, max, defaultVal){
   sel.value = String(defaultVal);
 }
 populateCapSelect(capQB, 6, 2);
-populateCapSelect(capRB, 8, 3);
-populateCapSelect(capWR, 8, 3);
-populateCapSelect(capTE, 4, 1);
-populateCapSelect(capFLEX, 10, 1);
+populateCapSelect(capRB, 8, 'Infinity');
+populateCapSelect(capWR, 8, 'Infinity');
+populateCapSelect(capTE, 4, 'Infinity');
+populateCapSelect(capFLEX, 10, 'Infinity');
+
+// Standalone Max QB dropdown (Any/2/3/4) - active only when the position-cap
+// checkbox below is off.
+['Any', '2', '3', '4'].forEach(v => {
+  const opt = document.createElement('option');
+  opt.value = v === 'Any' ? 'Infinity' : v;
+  opt.textContent = v;
+  maxQbSelect.appendChild(opt);
+});
+maxQbSelect.value = 'Infinity';
 
 // Populate the team dropdown once from TEAMS (sorted alphabetically for easy scanning)
 TEAMS.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(team => {
@@ -795,18 +811,20 @@ function parseCapValue(v){
   return v === 'Infinity' ? Infinity : parseInt(v, 10);
 }
 
-// Reads the 5 position-cap dropdowns into a caps object used by selectProtects.
+// Reads the active cap control(s) into a caps object used by selectProtects.
+// The position-cap checkbox (5 dropdowns) takes over when checked; otherwise
+// the standalone Max QB dropdown is the only cap in effect.
 function getCaps(){
-  if (!capToggle.checked){
-    return { QB: Infinity, RB: Infinity, WR: Infinity, TE: Infinity, flexBonus: Infinity };
+  if (capToggle.checked){
+    return {
+      QB: parseCapValue(capQB.value),
+      RB: parseCapValue(capRB.value),
+      WR: parseCapValue(capWR.value),
+      TE: parseCapValue(capTE.value),
+      flexBonus: parseCapValue(capFLEX.value),
+    };
   }
-  return {
-    QB: parseCapValue(capQB.value),
-    RB: parseCapValue(capRB.value),
-    WR: parseCapValue(capWR.value),
-    TE: parseCapValue(capTE.value),
-    flexBonus: parseCapValue(capFLEX.value),
-  };
+  return { QB: parseCapValue(maxQbSelect.value), RB: Infinity, WR: Infinity, TE: Infinity, flexBonus: Infinity };
 }
 
 // Greedily protects up to n players from a pre-sorted list, respecting position caps.
@@ -864,6 +882,8 @@ function buildLineup(roster){
 
 // Snake draft that stops each new team at ROSTER_CAP so their bench matches
 // everyone else's shape instead of absorbing the entire leftover pool.
+// Anyone in the pool that neither new team drafts stays with their original
+// team (goes back to that team's bench) rather than hitting free agency.
 function simulateSnakeDraft(pool, cap){
   const rosters = [[], []];
   const capped = [false, false];
@@ -883,9 +903,8 @@ function simulateSnakeDraft(pool, cap){
     }
     round++;
   }
-  const drafted = rosters[0].length + rosters[1].length;
-  const leftover = items.length - drafted;
-  return { rosters, leftover };
+  const leftoverPlayers = items.slice(i);
+  return { rosters, leftoverPlayers };
 }
 
 function draftRow(p, labelHtml){
@@ -901,11 +920,11 @@ function draftRow(p, labelHtml){
 }
 
 function renderDraftBoard(pool){
-  const { rosters, leftover } = simulateSnakeDraft(pool, ROSTER_CAP);
+  const { rosters, leftoverPlayers } = simulateSnakeDraft(pool, ROSTER_CAP);
   draftBoard.innerHTML = '';
 
-  draftSubText.textContent = leftover > 0
-    ? `Best-player-available, alternating every round. Each new roster is capped at ${ROSTER_CAP} (11 starters / 14 bench / 4 taxi) to match everyone else \u2014 ${leftover} player${leftover===1?'':'s'} left over would hit free agency.`
+  draftSubText.textContent = leftoverPlayers.length > 0
+    ? `Best-player-available, alternating every round. Each new roster is capped at ${ROSTER_CAP} (11 starters / 14 bench / 4 taxi) to match everyone else \u2014 ${leftoverPlayers.length} player${leftoverPlayers.length===1?'':'s'} nobody drafted stay put and go back to their original team's bench.`
     : `Best-player-available, alternating every round, drafting straight out of the pool above until each new roster matches everyone else's shape (11 starters / 14 bench / 4 taxi \u2014 ${ROSTER_CAP} total).`;
 
   rosters.forEach((roster, idx) => {
@@ -963,7 +982,7 @@ function renderDraftBoard(pool){
   draftBoard.querySelectorAll('.draft-name-input').forEach(inp => {
     inp.addEventListener('input', (e) => {
       expansionNames[parseInt(e.target.dataset.idx,10)] = e.target.value;
-      renderPowerRankings(lastExistingRosters, rosters);
+      renderPowerRankings(mergeLeftoversIntoExisting(), rosters);
     });
   });
   draftBoard.querySelectorAll('.lineup-toggle-btn').forEach(btn => {
@@ -974,7 +993,7 @@ function renderDraftBoard(pool){
     });
   });
 
-  return rosters;
+  return { rosters, leftoverPlayers };
 }
 
 // --- Power rankings ------------------------------------------------------
@@ -1082,6 +1101,21 @@ function renderPowerRankings(existingTeams, newRosters){
 
 let lastExistingRosters = [];
 let lastNewRosters = [];
+let lastLeftoverPlayers = [];
+
+// Anyone exposed but not drafted by either new team stays on their original
+// team's bench instead of vanishing to free agency.
+function mergeLeftoversIntoExisting(){
+  const leftoverByTeam = new Map();
+  lastLeftoverPlayers.forEach(p => {
+    if (!leftoverByTeam.has(p.team_name)) leftoverByTeam.set(p.team_name, []);
+    leftoverByTeam.get(p.team_name).push(p);
+  });
+  return lastExistingRosters.map(t => ({
+    ...t,
+    roster: t.roster.concat(leftoverByTeam.get(t.name) || []),
+  }));
+}
 
 function render(){
   const n = parseInt(slider.value, 10);
@@ -1157,9 +1191,11 @@ function render(){
 
   pool.sort((a,b) => b.value - a.value);
 
-  const newRosters = renderDraftBoard(pool);
+  const { rosters: newRosters, leftoverPlayers } = renderDraftBoard(pool);
   lastNewRosters = newRosters;
-  renderPowerRankings(lastExistingRosters, newRosters);
+  lastLeftoverPlayers = leftoverPlayers;
+
+  renderPowerRankings(mergeLeftoversIntoExisting(), newRosters);
 
   let filtered = pool;
   if (activeTeam !== 'ALL') filtered = filtered.filter(p => p.team_name === activeTeam);
@@ -1236,6 +1272,10 @@ function applySliderLock(){
 
 slider.addEventListener('input', render);
 timelineToggle.addEventListener('change', render);
+maxQbSelect.addEventListener('change', () => {
+  applySliderLock();
+  render();
+});
 capSelects.forEach(sel => {
   sel.addEventListener('change', () => {
     applySliderLock();
@@ -1244,6 +1284,7 @@ capSelects.forEach(sel => {
 });
 capToggle.addEventListener('change', () => {
   capSelects.forEach(sel => { sel.disabled = !capToggle.checked; });
+  maxQbSelect.disabled = capToggle.checked;
   applySliderLock();
   render();
 });
@@ -1262,7 +1303,7 @@ filterBtns.forEach(btn => {
 document.querySelectorAll('.sortable-th').forEach(th => {
   th.addEventListener('click', () => {
     sortKey = th.dataset.sort;
-    renderPowerRankings(lastExistingRosters, lastNewRosters);
+    renderPowerRankings(mergeLeftoversIntoExisting(), lastNewRosters);
   });
 });
 

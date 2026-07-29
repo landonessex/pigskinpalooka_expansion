@@ -374,6 +374,12 @@
     color: #0d1210;
     flex-shrink:0;
   }
+  .qb-star{
+    color: var(--gold);
+    font-size: 10px;
+    flex-shrink:0;
+    line-height:1;
+  }
   .pval{
     font-family:'JetBrains Mono',monospace;
     font-size: 11px;
@@ -705,6 +711,28 @@
 <script src="data.js"></script>
 <script>
 const FLEX_POS = new Set(["RB","WR","TE"]);
+
+// Real-life NFL starting QBs (per league consensus) — used to bias the
+// lineup builder toward actual starters over higher-value backups, and to
+// mark them with a small star wherever a QB's position tag is shown.
+function normName(s){
+  return s.toLowerCase().replace(/[.'-]/g, '').replace(/\s+/g, ' ').trim();
+}
+const STARTING_QBS = new Set([
+  'sam darnold','kirk cousins','daniel jones','jacoby brissett','aaron rodgers','geno smith',
+  'kyler murray','joe burrow','patrick mahomes','josh allen','lamar jackson',
+  'cam ward','malik willis','bo nix','justin herbert','deshaun watson',
+  'cj stroud','trevor lawrence','dak prescott','jaxson dart','jalen hurts',
+  'jayden daniels','matthew stafford','brock purdy','caleb williams','jared goff',
+  'tua tagovailoa','tyler shough','baker mayfield','bryce young',
+].map(normName));
+function isStarterQB(p){
+  return p.pos === 'QB' && STARTING_QBS.has(normName(p.name));
+}
+function posTagHtml(p){
+  const star = isStarterQB(p) ? '<span class="qb-star" title="NFL starting QB">\u2736</span>' : '';
+  return `${star}<span class="ptag tag-${p.pos}">${p.pos}</span>`;
+}
 const ROSTER_CAP = 29; // 11 starters + 14 bench + 4 taxi, matches everyone else's shape
 const TIER_CLASS = {
   "Contender": "tier-Contender",
@@ -872,11 +900,31 @@ function selectProtects(sortedPlayers, n, caps){
 
 function buildLineup(roster){
   // roster assumed sorted desc by value already
-  const need = {QB:2, RB:3, WR:3, TE:1};
-  const filled = {QB:0, RB:0, WR:0, TE:0};
+  const need = {RB:3, WR:3, TE:1};
+  const filled = {RB:0, WR:0, TE:0};
   const starters = [];
-  const leftover = [];
-  roster.forEach(p => {
+  let leftover = [];
+
+  // QBs get tiered first: real starters fill the 2 QB slots ahead of backups
+  // regardless of value (managers would start Geno Smith over Mac Jones even
+  // if Mac Jones grades out higher in dynasty value). Value order is still
+  // respected within each tier.
+  const qbs = roster.filter(p => p.pos === 'QB');
+  const starterQbs = qbs.filter(isStarterQB);
+  const backupQbs = qbs.filter(p => !isStarterQB(p));
+  const qbOrder = starterQbs.concat(backupQbs);
+  let qbCount = 0;
+  qbOrder.forEach(p => {
+    if (qbCount < 2){
+      qbCount++;
+      starters.push({...p, slotLabel: 'QB' + qbCount});
+    } else {
+      leftover.push(p);
+    }
+  });
+
+  // Everyone else fills RB/WR/TE need as before, in value order.
+  roster.filter(p => p.pos !== 'QB').forEach(p => {
     if ((filled[p.pos]||0) < (need[p.pos]||0)){
       filled[p.pos] = (filled[p.pos]||0) + 1;
       starters.push({...p, slotLabel: p.pos + filled[p.pos]});
@@ -884,6 +932,10 @@ function buildLineup(roster){
       leftover.push(p);
     }
   });
+
+  // Re-sort leftover by value so FLEX picks the best remaining RB/WR/TE.
+  leftover.sort((a,b) => b.value - a.value);
+
   let flexN = 0;
   const bench = [];
   leftover.forEach(p => {
@@ -943,7 +995,7 @@ function draftRow(p, labelHtml){
   li.innerHTML = `
     ${labelHtml}
     <span class="pname" title="${p.name}">${p.name}</span>
-    <span class="ptag tag-${p.pos}">${p.pos}</span>
+    ${posTagHtml(p)}
     <span class="pval mono">${fmtVal(p.value)}</span>
   `;
   return li;
@@ -1213,7 +1265,7 @@ function render(){
           <span class="rank mono">${i+1}</span>
           <span class="pname" title="${p.name}">${p.name}</span>
           ${moveHtml}
-          <span class="ptag tag-${p.pos}">${p.pos}</span>
+          ${posTagHtml(p)}
           <span class="pval mono">${fmtVal(p.value)}</span>
         `;
         list.appendChild(li);
@@ -1247,7 +1299,7 @@ function render(){
     tr.innerHTML = `
       <td class="rankcol mono">${i+1}</td>
       <td>${p.name}</td>
-      <td><span class="ptag tag-${p.pos}">${p.pos}</span></td>
+      <td>${posTagHtml(p)}</td>
       <td class="teamcol">${p.team || '—'}</td>
       <td class="teamcol">${p.team_name}</td>
       <td class="valcol">${fmtVal(p.value)}</td>

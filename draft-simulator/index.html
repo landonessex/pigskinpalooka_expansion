@@ -364,63 +364,6 @@
   .log-list li .pick-tag{ color: var(--gold-dim); }
   .log-list li.you{ color: var(--gold); }
 
-  .budget-grid{
-    display:grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px,1fr));
-    gap: 8px;
-    padding: 12px 16px;
-  }
-  .budget-card{
-    background: var(--bg-card);
-    border: 1px solid var(--line);
-    border-radius: 4px;
-    padding: 8px 10px;
-  }
-  .budget-card.you{ border-color: var(--gold); }
-  .budget-name{ font-size:11px; color:var(--text-dim); }
-  .budget-amt{ font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; color:var(--gold); }
-  .budget-slots{ font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--text-faint); }
-
-  .nomination-box, .bid-box{
-    background: var(--bg-card);
-    border: 1px solid var(--gold-dim);
-    border-radius: 6px;
-    padding: 16px;
-    margin-bottom: 16px;
-  }
-  .nomination-box h3, .bid-box h3{ margin:0 0 10px; font-size:16px; }
-  .bid-box .player-line{ font-size: 18px; font-weight:600; margin-bottom:4px; }
-  .bid-box .value-ref{ font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--text-dim); margin-bottom:12px; }
-  .bid-input-row{ display:flex; gap:10px; align-items:center; }
-  .bid-input-row input[type=number]{
-    width: 100px;
-    background: var(--bg-panel);
-    border: 1px solid var(--line);
-    color: var(--text);
-    padding: 8px 10px;
-    border-radius: 4px;
-    font-family:'JetBrains Mono',monospace;
-    font-size: 16px;
-  }
-  .bid-submit-btn, .nominate-btn{
-    background: var(--gold);
-    border:none;
-    border-radius: 4px;
-    color:#0d1210;
-    font-weight:600;
-    padding: 10px 18px;
-    cursor:pointer;
-    font-family:'Oswald',sans-serif;
-  }
-  .skip-btn{
-    background: transparent;
-    border: 1px solid var(--line);
-    color: var(--text-dim);
-    border-radius: 4px;
-    padding: 10px 16px;
-    cursor:pointer;
-    font-family:'Oswald',sans-serif;
-  }
 
   .end-screen{ text-align:center; padding: 60px 20px; }
   .end-screen h2{ font-size: 28px; text-transform:uppercase; margin-bottom: 20px; }
@@ -433,7 +376,7 @@
 <header>
   <div class="eyebrow">Pigskin Palooka</div>
   <h1>Supplemental <span>Draft</span> Simulator</h1>
-  <p class="sub">Every team keeps their top 12. That leaves 17 open roster slots each — draft the rest live, snake or auction, against 11 AI-controlled teams.</p>
+  <p class="sub">Every team keeps their top 12. That leaves 17 open roster slots each — draft the rest live, snake-style, against 11 AI-controlled teams.</p>
 </header>
 
 <main>
@@ -451,14 +394,6 @@
       <div class="radio-group" id="orderGroup">
         <div class="radio-btn active" data-val="random">Randomize<small>shuffle the 12 teams</small></div>
         <div class="radio-btn" data-val="reverse">Reverse Value<small>lowest 12-man value picks 1st</small></div>
-      </div>
-    </div>
-
-    <div class="field">
-      <label>Draft type</label>
-      <div class="radio-group" id="typeGroup">
-        <div class="radio-btn active" data-val="snake">Snake Draft<small>17 rounds, order flips each round</small></div>
-        <div class="radio-btn" data-val="auction">Auction<small>$100 budget, DLF values set the market</small></div>
       </div>
     </div>
 
@@ -524,75 +459,6 @@
   </div>
 </div>
 
-<!-- ============ AUCTION DRAFT SCREEN ============ -->
-<div class="draft-screen" id="auctionScreen">
-  <div class="status-bar">
-    <div class="status-left">
-      <div class="pick-indicator mono" id="auctionPickIndicator">Nominations: 0</div>
-      <div class="on-clock" id="auctionOnClock">Nominating: —</div>
-    </div>
-    <div class="timer" id="auctionTimer">60</div>
-  </div>
-
-  <div class="last-pick-banner" id="auctionLastPick">
-    <span class="lp-label">Last sale</span>
-    <span class="lp-content">Auction hasn't started yet.</span>
-  </div>
-  <div class="last-pick-banner" id="auctionYourStatus" style="margin-top:8px;">
-    <span class="lp-label">You</span>
-    <span class="lp-content" id="auctionYourStatusText">$100 &middot; 0/17 slots</span>
-  </div>
-
-  <div id="nominationArea" style="margin-top:16px;"></div>
-
-  <div class="mobile-tabs" id="auctionTabs">
-    <button class="mobile-tab-btn active" data-tab="pool">Available</button>
-    <button class="mobile-tab-btn" data-tab="team">My Team</button>
-    <button class="mobile-tab-btn" data-tab="log">Log</button>
-    <button class="mobile-tab-btn" data-tab="budgets">Budgets</button>
-  </div>
-
-  <div class="panel tab-panel" data-tab="budgets" style="margin-top:16px;">
-    <div class="panel-head">Budgets</div>
-    <div class="budget-grid" id="budgetGrid"></div>
-  </div>
-
-  <div class="draft-layout" style="margin-top:16px;">
-    <div class="panel tab-panel tab-active" data-tab="pool">
-      <div class="panel-head">Remaining Pool <span class="mono" id="auctionPoolCount" style="font-size:11px;color:var(--text-faint);"></span></div>
-      <div class="pool-controls">
-        <input type="text" id="auctionSearch" placeholder="Search players...">
-        <button class="pos-filter-btn active" data-f="ALL">ALL</button>
-        <button class="pos-filter-btn" data-f="QB">QB</button>
-        <button class="pos-filter-btn" data-f="RB">RB</button>
-        <button class="pos-filter-btn" data-f="WR">WR</button>
-        <button class="pos-filter-btn" data-f="TE">TE</button>
-      </div>
-      <div class="pool-scroll">
-        <table>
-          <thead><tr><th>Player</th><th>Pos</th><th>NFL</th><th style="text-align:right">Auction $</th><th></th></tr></thead>
-          <tbody id="auctionPoolBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div>
-      <div class="panel tab-panel" data-tab="team" style="margin-bottom:16px;">
-        <div class="panel-head">Your Team <span class="mono" id="auctionYourCount" style="font-size:11px;color:var(--text-faint);"></span></div>
-        <div class="panel-body">
-          <ul class="roster-list" id="auctionYourRoster" style="max-height:none;"></ul>
-        </div>
-      </div>
-      <div class="panel tab-panel" data-tab="log">
-        <div class="panel-head">Auction Log</div>
-        <div class="panel-body">
-          <ul class="log-list" id="auctionLog" style="max-height:none;"></ul>
-        </div>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- ============ END SCREEN ============ -->
 <div class="draft-screen" id="endScreen">
   <div class="end-screen">
@@ -605,7 +471,7 @@
 </main>
 
 <footer>
-  Baseline: each of the 10 original teams keeps its top 12 by consensus value; the 2 expansion teams fill their own 12 via a QB-need-aware snake mini-draft from what's left over &middot; Auction values from DLF, 2026-07-29 snapshot &middot; live auction &mdash; AI teams have a hidden max bid and only raise the minimum needed to retake the lead, exactly like real proxy bidding, and you can jump in and counter-raise at any point
+  Baseline: each of the 10 original teams keeps its top 12 by consensus value; the 2 expansion teams fill their own 12 via a QB-need-aware snake mini-draft from what's left over &middot; the same QB-scarcity logic applies to the 11 AI teams here, so real starting QBs don't fall out of the draft entirely
 </footer>
 
 <script src="draftsim_data.js"></script>

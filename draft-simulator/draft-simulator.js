@@ -23,45 +23,31 @@ const QB_NEED_BOOST = 1.3;
 const TOTAL_ROUNDS = 17;
 const NUM_TEAMS = 12;
 const PICK_SECONDS = 60;
-const AUCTION_BUDGET = 100;
-
-function auctionValueOf(p){
-  return AUCTION_VALUES[p.name] ?? 0.05;
-}
 
 // ===================================================================
 // Global state
 // ===================================================================
 const state = {
   userTeam: null,
-  draftType: 'snake',
   orderMode: 'random',
   order: [],          // array of team names, draft order
-  teams: {},          // name -> { name, isExpansion, baseline: [...], drafted: [...], budget, totalValue }
+  teams: {},          // name -> { name, isExpansion, baseline: [...], drafted: [...], totalValue }
   pool: [],           // mutable remaining pool
-  // snake-specific
   round: 1,
   pickWithinRound: 0,
   pickNo: 0,
   timerInterval: null,
   timeLeft: PICK_SECONDS,
-  // auction-specific
-  nominationTurnIdx: 0,
-  auctionPhase: 'nominate', // 'nominate' | 'bid'
-  currentNominee: null,
-  currentNominator: null,
-  liveAuction: null, // { player, currentPrice, currentLeader, aiCeilings }
   // filters
   snakeFilter: 'ALL', snakeSearch: '',
-  auctionFilter: 'ALL', auctionSearch: '',
 };
+
 
 // ===================================================================
 // Setup screen
 // ===================================================================
 const teamSelect = document.getElementById('teamSelect');
 const orderGroup = document.getElementById('orderGroup');
-const typeGroup = document.getElementById('typeGroup');
 const startBtn = document.getElementById('startBtn');
 const setupNote = document.getElementById('setupNote');
 
@@ -82,7 +68,6 @@ function wireRadioGroup(group, onChange){
   });
 }
 wireRadioGroup(orderGroup, v => state.orderMode = v);
-wireRadioGroup(typeGroup, v => state.draftType = v);
 
 setupNote.textContent = `Pool for this draft: ${POOL17.length} players left over after all 12 teams keep their 12. ${NUM_TEAMS} teams \u00d7 ${TOTAL_ROUNDS} rounds = ${NUM_TEAMS*TOTAL_ROUNDS} slots \u2014 since that's more than the pool holds, the draft ends early once the pool runs dry rather than forcing a full ${TOTAL_ROUNDS} rounds for everyone.`;
 
@@ -102,7 +87,6 @@ function initializeDraft(){
       isExpansion: t.isExpansion,
       baseline: t.roster,
       drafted: [],
-      budget: AUCTION_BUDGET,
     };
   });
 
@@ -121,14 +105,8 @@ function initializeDraft(){
   state.pool = POOL17.slice();
 
   document.getElementById('setupScreen').classList.add('hidden');
-
-  if (state.draftType === 'snake'){
-    document.getElementById('snakeScreen').classList.add('active');
-    startSnakeDraft();
-  } else {
-    document.getElementById('auctionScreen').classList.add('active');
-    startAuctionDraft();
-  }
+  document.getElementById('snakeScreen').classList.add('active');
+  startSnakeDraft();
 }
 
 function teamQbCount(team){
@@ -315,352 +293,6 @@ function endSnakeDraft(){
 }
 
 // ===================================================================
-// AUCTION DRAFT ENGINE
-// Sealed-max-bid format: when a player is nominated, every eligible team
-// (AI instantly, user via the bid box) submits a private max bid at once.
-// Highest bid wins, paying $1 over the 2nd-highest bid (capped at their
-// own max) — approximates a live ascending auction without needing a
-// real-time bidding war UI.
-// ===================================================================
-function allTeamsFull(){
-  return Object.values(state.teams).every(t => t.drafted.length >= TOTAL_ROUNDS);
-}
-
-function countTotalDrafted(){
-  return Object.values(state.teams).reduce((s,t) => s + t.drafted.length, 0);
-}
-
-function maxAffordable(team){
-  const slotsAfter = TOTAL_ROUNDS - team.drafted.length - 1; // slots still needed after winning this one
-  return team.budget - Math.max(0, slotsAfter);
-}
-
-function desiredBid(p, team){
-  let v = auctionValueOf(p);
-  if (isStarterQB(p) && teamQbCount(team) < QB_NEED_TARGET) v *= 1.4;
-  v *= (0.85 + Math.random() * 0.3);
-  return v;
-}
-
-function computeAiBid(p, team){
-  if (team.drafted.length >= TOTAL_ROUNDS) return 0;
-  const cap = maxAffordable(team);
-  if (cap < 1) return 0;
-  return Math.max(0, Math.min(cap, desiredBid(p, team)));
-}
-
-// Fixed per-player AI ceilings (their true max willingness to pay), computed
-// once when a player is nominated. The live auction never reveals these —
-// AI teams only ever raise the minimum needed to retake the lead, exactly
-// like real proxy bidding.
-function computeAiCeilings(player){
-  const ceilings = {};
-  Object.values(state.teams).forEach(team => {
-    if (team.name === state.userTeam) return;
-    ceilings[team.name] = computeAiBid(player, team);
-  });
-  return ceilings;
-}
-
-// Full equilibrium among AI teams alone (used right after nomination, since
-// several AI could compete with each other before the user even acts).
-function resolveFullAiCompetition(ceilings){
-  const entries = Object.entries(ceilings).filter(([,ceil]) => ceil >= 1);
-  if (entries.length === 0) return null;
-  entries.sort((a,b) => b[1] - a[1]);
-  const [winnerName, winnerCeil] = entries[0];
-  const secondCeil = entries[1] ? entries[1][1] : 0;
-  const price = Math.max(1, Math.min(winnerCeil, secondCeil + 1));
-  return { name: winnerName, price };
-}
-
-// Does any AI (other than excludeName) want to beat minPrice? If several do,
-// resolve their own mini-equilibrium too so only one clean raise is shown.
-function bestAiChallenge(ceilings, minPrice, excludeName){
-  const entries = Object.entries(ceilings).filter(([name,ceil]) => name !== excludeName && ceil > minPrice);
-  if (entries.length === 0) return null;
-  entries.sort((a,b) => b[1] - a[1]);
-  const [name, ceil] = entries[0];
-  const second = entries[1] ? entries[1][1] : minPrice;
-  const price = Math.max(minPrice + 1, Math.min(ceil, second + 1));
-  return { name, price };
-}
-
-function removeFromPool(player){
-  const idx = state.pool.findIndex(p => p.name === player.name);
-  if (idx !== -1) state.pool.splice(idx, 1);
-}
-
-function logAuction(msg, isUser){
-  const log = document.getElementById('auctionLog');
-  const li = document.createElement('li');
-  if (isUser) li.className = 'you';
-  li.innerHTML = msg;
-  log.insertBefore(li, log.firstChild);
-}
-
-function awardPlayer(teamName, player, price){
-  const team = state.teams[teamName];
-  team.budget -= price;
-  team.drafted.push({...player, pricePaid: price});
-  removeFromPool(player);
-  const isYou = teamName === state.userTeam;
-  const line = `<strong>${player.name}</strong> to ${teamName}${isYou?' (you)':''} for $${price}`;
-  logAuction(line, isYou);
-  const banner = document.getElementById('auctionLastPick');
-  banner.classList.toggle('you', isYou);
-  banner.querySelector('.lp-content').innerHTML = line;
-  renderBudgets();
-  if (teamName === state.userTeam) renderAuctionYourRoster();
-}
-
-function finalizeLiveAuction(){
-  clearInterval(state.timerInterval);
-  document.getElementById('nominationArea').innerHTML = '';
-  document.getElementById('auctionTimer').classList.add('hidden');
-  const { player, currentPrice, currentLeader } = state.liveAuction;
-  awardPlayer(currentLeader, player, currentPrice);
-  state.liveAuction = null;
-  state.auctionPhase = 'nominate';
-  state.nominationTurnIdx++;
-  runNominationTurn();
-}
-
-function renderLiveBidUI(){
-  const { player, currentPrice, currentLeader } = state.liveAuction;
-  const area = document.getElementById('nominationArea');
-  renderAuctionPool();
-
-  if (currentLeader === state.userTeam){
-    // Nobody's contesting the user right now — nothing left to decide.
-    area.innerHTML = `<div class="bid-box"><h3>You're leading on ${player.name} at $${currentPrice}</h3><p style="color:var(--text-dim);font-size:13px;">No one else wants it at this price \u2014 wrapping up.</p></div>`;
-    document.getElementById('auctionTimer').classList.add('hidden');
-    setTimeout(finalizeLiveAuction, 700);
-    return;
-  }
-
-  const team = state.teams[state.userTeam];
-  const cap = Math.max(0, Math.floor(maxAffordable(team)));
-  const minRaise = currentPrice + 1;
-  const canRaise = cap >= minRaise;
-
-  area.innerHTML = `
-    <div class="bid-box">
-      <h3>${player.name} <span class="ptag tag-${player.pos}">${player.pos}</span> \u2014 ${currentLeader} leads at $${currentPrice}</h3>
-      <div class="value-ref">DLF auction value: $${Math.round(auctionValueOf(player))} &middot; your max affordable bid: $${cap}</div>
-      <div class="bid-input-row">
-        <input type="number" id="userBidInput" min="${minRaise}" max="${Math.max(minRaise,cap)}" step="1" placeholder="$${minRaise}+" ${canRaise?'':'disabled'}>
-        <button class="bid-submit-btn" id="submitBidBtn" ${canRaise?'':'disabled'}>Raise</button>
-        <button class="skip-btn" id="passBidBtn">Pass</button>
-      </div>
-      ${canRaise?'':'<p style="color:var(--text-faint);font-size:11px;margin-top:8px;">You can\'t afford to top this bid and still fill your remaining slots.</p>'}
-    </div>
-  `;
-  if (canRaise){
-    document.getElementById('submitBidBtn').addEventListener('click', () => {
-      const val = parseInt(document.getElementById('userBidInput').value, 10);
-      const raiseTo = (isNaN(val) || val < minRaise) ? minRaise : Math.min(val, cap);
-      userRaise(raiseTo);
-    });
-  }
-  document.getElementById('passBidBtn').addEventListener('click', finalizeLiveAuction);
-}
-
-function userRaise(amount){
-  clearInterval(state.timerInterval);
-  state.liveAuction.currentPrice = amount;
-  state.liveAuction.currentLeader = state.userTeam;
-  logAuction(`You raise to $${amount}`, true);
-  const challenge = bestAiChallenge(state.liveAuction.aiCeilings, amount, state.userTeam);
-  if (challenge){
-    state.liveAuction.currentPrice = challenge.price;
-    state.liveAuction.currentLeader = challenge.name;
-    logAuction(`${challenge.name} comes back at $${challenge.price}`);
-  }
-  renderLiveBidUI();
-  if (state.liveAuction.currentLeader !== state.userTeam){
-    startAuctionTimer(finalizeLiveAuction);
-  }
-}
-
-function beginBidding(nominatorName, player){
-  clearInterval(state.timerInterval);
-  state.auctionPhase = 'bid';
-  state.currentNominee = player;
-  state.currentNominator = nominatorName;
-
-  const aiCeilings = computeAiCeilings(player);
-  let currentPrice = 1;
-  let currentLeader = nominatorName;
-  const initial = resolveFullAiCompetition(aiCeilings);
-  if (initial){
-    currentPrice = initial.price;
-    currentLeader = initial.name;
-    if (currentLeader !== nominatorName){
-      logAuction(`${nominatorName} opens at $1 \u2014 ${currentLeader} jumps in at $${currentPrice}`);
-    }
-  }
-  state.liveAuction = { player, currentPrice, currentLeader, aiCeilings };
-
-  const userTeamObj = state.teams[state.userTeam];
-  const userEligible = userTeamObj.drafted.length < TOTAL_ROUNDS && maxAffordable(userTeamObj) >= 1;
-
-  if (!userEligible){
-    document.getElementById('nominationArea').innerHTML = `<div class="bid-box"><h3>${player.name} \u2014 ${currentLeader} at $${currentPrice}</h3><p style="color:var(--text-dim);">You're full or out of budget \u2014 sitting this one out.</p></div>`;
-    document.getElementById('auctionTimer').classList.add('hidden');
-    setTimeout(finalizeLiveAuction, 700);
-    return;
-  }
-
-  renderLiveBidUI();
-  if (currentLeader !== state.userTeam){
-    startAuctionTimer(finalizeLiveAuction);
-  }
-}
-
-
-function runNominationTurn(){
-  if (state.pool.length === 0 || allTeamsFull()){ endAuctionDraft(); return; }
-  let attempts = 0;
-  while (state.teams[state.order[state.nominationTurnIdx % NUM_TEAMS]].drafted.length >= TOTAL_ROUNDS){
-    state.nominationTurnIdx++;
-    attempts++;
-    if (attempts > NUM_TEAMS){ endAuctionDraft(); return; }
-  }
-  const teamName = state.order[state.nominationTurnIdx % NUM_TEAMS];
-  state.currentNominator = teamName;
-  state.auctionPhase = 'nominate';
-  renderAuctionPool();
-  renderBudgets();
-  document.getElementById('auctionPickIndicator').textContent = `Nomination #${countTotalDrafted()+1}`;
-  const onClockEl = document.getElementById('auctionOnClock');
-  onClockEl.textContent = `Nominating: ${teamName}${teamName===state.userTeam?' (YOU)':''}`;
-  onClockEl.className = 'on-clock' + (teamName === state.userTeam ? ' you' : '');
-
-  if (teamName === state.userTeam){
-    document.getElementById('nominationArea').innerHTML = `<div class="nomination-box"><h3>Your turn to nominate</h3><p style="color:var(--text-dim);font-size:13px;">Pick anyone from the pool below and click Nominate.</p></div>`;
-    startAuctionTimer(() => {
-      const team = state.teams[state.userTeam];
-      const pick = aiBestPick(team, state.pool, auctionValueOf);
-      if (pick) beginBidding(teamName, pick);
-      else { state.nominationTurnIdx++; runNominationTurn(); }
-    });
-  } else {
-    document.getElementById('auctionTimer').classList.add('hidden');
-    document.getElementById('nominationArea').innerHTML = '';
-    setTimeout(() => {
-      const team = state.teams[teamName];
-      const pick = aiBestPick(team, state.pool, auctionValueOf);
-      if (pick) beginBidding(teamName, pick);
-      else { state.nominationTurnIdx++; runNominationTurn(); }
-    }, 500);
-  }
-}
-
-function startAuctionTimer(onTimeout){
-  const timerEl = document.getElementById('auctionTimer');
-  timerEl.classList.remove('hidden');
-  state.timeLeft = PICK_SECONDS;
-  timerEl.textContent = state.timeLeft;
-  timerEl.classList.remove('danger');
-  clearInterval(state.timerInterval);
-  state.timerInterval = setInterval(() => {
-    state.timeLeft--;
-    timerEl.textContent = state.timeLeft;
-    if (state.timeLeft <= 10) timerEl.classList.add('danger');
-    if (state.timeLeft <= 0){
-      clearInterval(state.timerInterval);
-      onTimeout();
-    }
-  }, 1000);
-}
-
-function startAuctionDraft(){
-  document.getElementById('auctionLog').innerHTML = '';
-  state.nominationTurnIdx = 0;
-  state.auctionPhase = 'nominate';
-  renderBudgets();
-  renderAuctionYourRoster();
-  runNominationTurn();
-}
-
-function renderBudgets(){
-  const grid = document.getElementById('budgetGrid');
-  grid.innerHTML = '';
-  state.order.forEach(name => {
-    const t = state.teams[name];
-    const div = document.createElement('div');
-    div.className = 'budget-card' + (name === state.userTeam ? ' you' : '');
-    div.innerHTML = `<div class="budget-name">${name}${name===state.userTeam?' (you)':''}</div><div class="budget-amt mono">$${t.budget}</div><div class="budget-slots mono">${t.drafted.length}/${TOTAL_ROUNDS} slots</div>`;
-    grid.appendChild(div);
-  });
-  const you = state.teams[state.userTeam];
-  document.getElementById('auctionYourStatusText').textContent = `$${you.budget} \u00b7 ${you.drafted.length}/${TOTAL_ROUNDS} slots`;
-}
-
-function renderAuctionYourRoster(){
-  const team = state.teams[state.userTeam];
-  const list = document.getElementById('auctionYourRoster');
-  document.getElementById('auctionYourCount').textContent = `${team.drafted.length}/${TOTAL_ROUNDS} slots \u00b7 $${team.budget} left`;
-  list.innerHTML = '';
-  team.drafted.slice().reverse().forEach((p,i) => {
-    const li = document.createElement('li');
-    li.innerHTML = `<span class="slotnum mono">${team.drafted.length-i}</span><span class="pname">${isStarterQB(p)?'<span class=\"qb-star\">\u2736</span>':''}${p.name}</span><span class="ptag tag-${p.pos}">${p.pos}</span><span class="pval mono">$${p.pricePaid}</span>`;
-    list.appendChild(li);
-  });
-}
-
-function renderAuctionPool(){
-  const canNominate = state.auctionPhase === 'nominate' && state.currentNominator === state.userTeam;
-  const body = document.getElementById('auctionPoolBody');
-  let filtered = state.pool;
-  if (state.auctionFilter !== 'ALL') filtered = filtered.filter(p => p.pos === state.auctionFilter);
-  if (state.auctionSearch) filtered = filtered.filter(p => p.name.toLowerCase().includes(state.auctionSearch));
-  filtered = filtered.slice().sort((a,b) => auctionValueOf(b) - auctionValueOf(a));
-  document.getElementById('auctionPoolCount').textContent = `${filtered.length} shown / ${state.pool.length} left`;
-  body.innerHTML = '';
-  filtered.forEach(p => {
-    const tr = document.createElement('tr');
-    const star = isStarterQB(p) ? '<span class="qb-star" title="NFL starting QB">\u2736</span>' : '';
-    tr.innerHTML = `
-      <td>${p.name}</td>
-      <td>${star}<span class="ptag tag-${p.pos}">${p.pos}</span></td>
-      <td style="color:var(--text-faint);font-size:12px;">${p.team||'—'}</td>
-      <td class="mono" style="text-align:right;color:var(--gold-dim);">$${Math.round(auctionValueOf(p))}</td>
-      <td><button class="draft-btn" ${canNominate?'':'disabled'} data-name="${p.name}">Nominate</button></td>
-    `;
-    body.appendChild(tr);
-  });
-  body.querySelectorAll('.draft-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      if (!(state.auctionPhase === 'nominate' && state.currentNominator === state.userTeam)) return;
-      const player = state.pool.find(p => p.name === btn.dataset.name);
-      if (!player) return;
-      beginBidding(state.userTeam, player);
-    });
-  });
-}
-
-document.getElementById('auctionSearch').addEventListener('input', (e) => {
-  state.auctionSearch = e.target.value.toLowerCase();
-  renderAuctionPool();
-});
-document.querySelectorAll('#auctionScreen .pos-filter-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#auctionScreen .pos-filter-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    state.auctionFilter = btn.dataset.f;
-    renderAuctionPool();
-  });
-});
-
-function endAuctionDraft(){
-  clearInterval(state.timerInterval);
-  document.getElementById('auctionScreen').classList.remove('active');
-  showEndScreen();
-}
-
-// ===================================================================
 // Shared end screen
 // ===================================================================
 function showEndScreen(){
@@ -686,7 +318,7 @@ function showEndScreen(){
     html += '<div class="panel-body"><ul class="roster-list" style="max-height:none;">';
     full.forEach((p,i) => {
       const star = isStarterQB(p) ? '<span class="qb-star">\u2736</span>' : '';
-      const priceTag = p.pricePaid != null ? `$${p.pricePaid}` : Math.round(p.value);
+      const priceTag = Math.round(p.value);
       html += `<li><span class="slotnum mono">${i+1}</span><span class="pname">${star}${p.name}</span><span class="ptag tag-${p.pos}">${p.pos}</span><span class="pval mono">${priceTag}</span></li>`;
     });
     html += '</ul></div></div>';
@@ -697,7 +329,7 @@ function showEndScreen(){
 }
 
 // ===================================================================
-// Mobile tab bar (Available / My Team / Log / Budgets)
+// Mobile tab bar (Available / My Team / Log)
 // On desktop the .tab-panel elements are just always visible in their
 // normal grid position; below 900px only the active one shows, switched
 // via these tabs instead of relying on scroll position.
@@ -716,6 +348,5 @@ function setupTabs(tabBarEl){
   });
 }
 setupTabs(document.getElementById('snakeTabs'));
-setupTabs(document.getElementById('auctionTabs'));
 
 

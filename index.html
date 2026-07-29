@@ -988,6 +988,17 @@ function buildLineup(roster){
 // team (goes back to that team's bench) rather than hitting free agency.
 // perOriginalCap (optional): max players either new team may take from any
 // single original team, so nobody gets picked clean out by one new roster.
+//
+// This is a 2-QB league, so pure trade-value BPA drafting under-drafts real
+// starting QBs — a mediocre real starter often carries less raw dynasty
+// value than a WR6/RB7 bench piece, but a real manager would still grab the
+// starter first since a viable QB2 is far scarcer than skill-position depth.
+// QB_NEED_TARGET/QB_NEED_BOOST give real starters (per the curated list) a
+// modest priority bump until a team has secured 3 of them, without letting
+// them leapfrog truly elite skill players at the very top of the draft.
+const QB_NEED_TARGET = 3;
+const QB_NEED_BOOST = 1.3;
+
 function simulateSnakeDraft(pool, cap, perOriginalCap){
   const rosters = [[], []];
   const capped = [false, false];
@@ -995,21 +1006,30 @@ function simulateSnakeDraft(pool, cap, perOriginalCap){
   const available = pool.slice(); // sorted desc by value; we splice out of this
   let round = 0;
   let pickNo = 0;
+
+  function effectiveValue(p, teamIdx){
+    if (isStarterQB(p)){
+      const currentStarters = rosters[teamIdx].filter(isStarterQB).length;
+      if (currentStarters < QB_NEED_TARGET) return p.value * QB_NEED_BOOST;
+    }
+    return p.value;
+  }
+
   while (available.length > 0 && !(capped[0] && capped[1])){
     const order = (round % 2 === 0) ? [0,1] : [1,0];
     for (const teamIdx of order){
       if (capped[teamIdx]) continue;
-      let foundIdx = -1;
+      let bestIdx = -1;
+      let bestVal = -Infinity;
       for (let idx = 0; idx < available.length; idx++){
         const p = available[idx];
         const cnt = takenCount[teamIdx].get(p.team_name) || 0;
-        if (perOriginalCap == null || cnt < perOriginalCap){
-          foundIdx = idx;
-          break;
-        }
+        if (perOriginalCap != null && cnt >= perOriginalCap) continue;
+        const ev = effectiveValue(p, teamIdx);
+        if (ev > bestVal){ bestVal = ev; bestIdx = idx; }
       }
-      if (foundIdx === -1) continue; // nothing eligible for this team right now
-      const p = available.splice(foundIdx, 1)[0];
+      if (bestIdx === -1) continue; // nothing eligible for this team right now
+      const p = available.splice(bestIdx, 1)[0];
       pickNo++;
       rosters[teamIdx].push({...p, pickNo, round: round+1});
       takenCount[teamIdx].set(p.team_name, (takenCount[teamIdx].get(p.team_name) || 0) + 1);

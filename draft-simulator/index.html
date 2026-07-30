@@ -123,6 +123,12 @@
     margin-top: 10px;
   }
   .start-btn:hover{ background:#e2ba63; }
+  .start-btn.secondary-btn{
+    background: transparent;
+    border: 1px solid var(--gold-dim);
+    color: var(--gold);
+  }
+  .start-btn.secondary-btn:hover{ background: rgba(212,169,78,0.08); border-color: var(--gold); }
   .setup-note{
     font-size:12px;
     color: var(--text-faint);
@@ -342,6 +348,23 @@
   .tag-TE{ background: var(--te); }
   .qb-star{ color: var(--gold); font-size:10px; margin-right:3px; }
 
+  .needs-row{
+    display:flex;
+    flex-wrap:wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line-soft);
+    font-family:'JetBrains Mono',monospace;
+    font-size: 11px;
+  }
+  .needs-row .need-tag{
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--bg-card);
+    border: 1px solid var(--line);
+  }
+  .needs-row .need-tag.short{ border-color: var(--red); color: var(--red); }
   .roster-list{ list-style:none; margin:0; padding:0; max-height: 260px; overflow-y:auto; }
   .roster-list li{
     display:flex; align-items:center; gap:8px;
@@ -398,7 +421,9 @@
     </div>
 
     <button class="start-btn" id="startBtn">Start Draft</button>
+    <button class="start-btn secondary-btn" id="simulateBtn">Simulate Entire Draft Instead</button>
     <p class="setup-note" id="setupNote"></p>
+    <p class="setup-note">Just want to see who you might end up with? Simulate skips the clock and plays every pick for all 12 teams instantly \u2014 the same AI logic that fills in for opponents also plays your team, weighing value and whichever positions each team is thinnest at.</p>
   </div>
 </div>
 
@@ -446,6 +471,7 @@
       <div class="panel tab-panel" data-tab="team" style="margin-bottom:16px;">
         <div class="panel-head">Your Team <span class="mono" id="snakeYourCount" style="font-size:11px;color:var(--text-faint);"></span></div>
         <div class="panel-body">
+          <div class="needs-row" id="snakeNeeds"></div>
           <ul class="roster-list" id="snakeYourRoster" style="max-height:none;"></ul>
         </div>
       </div>

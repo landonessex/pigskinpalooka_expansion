@@ -20,6 +20,14 @@ function isStarterQB(p){
 const QB_NEED_TARGET = 3;
 const QB_NEED_BOOST = 1.3;
 
+// General positional need: beyond the QB-specific scarcity logic above,
+// AI teams also lean toward whichever position they're thinnest at overall
+// (e.g. a team that kept mostly WRs in their top 12 should prioritize RB
+// depth here). Targets are rough bench-relevant depth for a 29-man roster,
+// not just starters.
+const POSITION_TARGETS = { RB: 6, WR: 7, TE: 2 };
+const POSITION_NEED_BOOST = 1.15;
+
 const TOTAL_ROUNDS = 17;
 const NUM_TEAMS = 12;
 const PICK_SECONDS = 60;
@@ -50,6 +58,7 @@ const teamSelect = document.getElementById('teamSelect');
 const orderGroup = document.getElementById('orderGroup');
 const startBtn = document.getElementById('startBtn');
 const setupNote = document.getElementById('setupNote');
+const simulateBtn = document.getElementById('simulateBtn');
 
 TEAMS12.slice().sort((a,b)=>b.totalValue - a.totalValue).forEach(t => {
   const opt = document.createElement('option');
@@ -76,11 +85,15 @@ startBtn.addEventListener('click', () => {
   initializeDraft();
 });
 
+simulateBtn.addEventListener('click', () => {
+  state.userTeam = teamSelect.value;
+  simulateEntireDraft();
+});
+
 // ===================================================================
 // Initialization
 // ===================================================================
-function initializeDraft(){
-  // Build per-team working state
+function setupTeamsAndOrder(){
   TEAMS12.forEach(t => {
     state.teams[t.name] = {
       name: t.name,
@@ -90,7 +103,6 @@ function initializeDraft(){
     };
   });
 
-  // Draft order
   let names = TEAMS12.map(t => t.name);
   if (state.orderMode === 'random'){
     for (let i = names.length - 1; i > 0; i--){
@@ -101,21 +113,60 @@ function initializeDraft(){
     names = TEAMS12.slice().sort((a,b) => a.totalValue - b.totalValue).map(t => t.name);
   }
   state.order = names;
-
   state.pool = POOL17.slice();
+}
 
+function initializeDraft(){
+  setupTeamsAndOrder();
   document.getElementById('setupScreen').classList.add('hidden');
   document.getElementById('snakeScreen').classList.add('active');
   startSnakeDraft();
+}
+
+// Plays every pick for all 12 teams instantly (including the user's own
+// team) using the same need-aware AI logic as the opponents, then jumps
+// straight to the final rosters. For anyone who just wants to see what
+// they'd plausibly end up with, without sitting through the full clock.
+function simulateEntireDraft(){
+  setupTeamsAndOrder();
+  document.getElementById('setupScreen').classList.add('hidden');
+
+  let round = 1, pickWithinRound = 0;
+  while (round <= TOTAL_ROUNDS && state.pool.length > 0){
+    const roundOrder = (round % 2 === 1) ? state.order : state.order.slice().reverse();
+    const teamName = roundOrder[pickWithinRound];
+    const team = state.teams[teamName];
+    const pick = aiBestPick(team, state.pool, p => p.value);
+    if (pick){
+      const idx = state.pool.findIndex(p => p.name === pick.name);
+      state.pool.splice(idx, 1);
+      team.drafted.push(pick);
+    }
+    pickWithinRound++;
+    if (pickWithinRound >= NUM_TEAMS){
+      pickWithinRound = 0;
+      round++;
+    }
+  }
+  showEndScreen();
 }
 
 function teamQbCount(team){
   return team.baseline.filter(isStarterQB).length + team.drafted.filter(isStarterQB).length;
 }
 
+function teamPosCount(team, pos){
+  return team.baseline.filter(p => p.pos === pos).length + team.drafted.filter(p => p.pos === pos).length;
+}
+
 function aiEffectiveValue(p, team, valuator){
   let v = valuator(p);
+  // Real-starter QB scarcity — strong boost, since this is a 2-QB league.
   if (isStarterQB(p) && teamQbCount(team) < QB_NEED_TARGET) v *= QB_NEED_BOOST;
+  // General positional need — milder boost toward whichever position a
+  // team is thinnest at overall (kept-12 + drafted so far combined).
+  const target = POSITION_TARGETS[p.pos];
+  if (target != null && teamPosCount(team, p.pos) < target) v *= POSITION_NEED_BOOST;
   v *= (0.94 + Math.random() * 0.12); // small jitter so AI isn't perfectly robotic
   return v;
 }
@@ -233,6 +284,18 @@ function renderSnakeYourRoster(){
   const team = state.teams[state.userTeam];
   const list = document.getElementById('snakeYourRoster');
   document.getElementById('snakeYourCount').textContent = `${team.drafted.length} drafted`;
+
+  const needsRow = document.getElementById('snakeNeeds');
+  const qbCount = teamQbCount(team);
+  const qbShort = qbCount < QB_NEED_TARGET;
+  let needsHtml = `<span class="need-tag${qbShort?' short':''}">QB (real starters): ${qbCount}/${QB_NEED_TARGET}</span>`;
+  Object.entries(POSITION_TARGETS).forEach(([pos, target]) => {
+    const count = teamPosCount(team, pos);
+    const short = count < target;
+    needsHtml += `<span class="need-tag${short?' short':''}">${pos}: ${count}/${target}</span>`;
+  });
+  needsRow.innerHTML = needsHtml;
+
   list.innerHTML = '';
   team.drafted.slice().reverse().forEach((p,i) => {
     const li = document.createElement('li');
